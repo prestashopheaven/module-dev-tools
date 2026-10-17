@@ -189,8 +189,11 @@ function detectMajors(?string $moduleDir, string $zip): array
 }
 
 /**
- * The response is keyed by category. Items are strings, {message,file,line,type}
- * objects, or {messages: [{content: [...]}]} groups.
+ * The response is keyed by category ("Details" holds the module info). Observed formats:
+ * {"Security": {"<message>": ["/file", ...]}} and lists of {message,file,line,type} or
+ * {messages: [{content: [...]}]}. Without an explicit type, the category decides:
+ * requirements, structure, errors, security and licenses block a submission; the rest
+ * (compatibility, standards, optimizations, translations) are warnings.
  *
  * @param array<string, mixed> $data
  *
@@ -198,15 +201,17 @@ function detectMajors(?string $moduleDir, string $zip): array
  */
 function printReport(array $data): array
 {
+    $blocking = ['requirements', 'structure', 'errors', 'security', 'licenses', 'license'];
     $errors = 0;
     $total = 0;
     foreach ($data as $category => $items) {
         if (!is_array($items) || strtolower((string) $category) === 'details') {
             continue;
         }
+        $default = in_array(strtolower((string) $category), $blocking, true) ? 'error' : 'warning';
         $lines = [];
         foreach (flatten($items) as $msg) {
-            $type = strtolower($msg['type'] ?? 'info');
+            $type = strtolower($msg['type'] ?? $default);
             if ($type === 'error') {
                 ++$errors;
             }
@@ -234,9 +239,17 @@ function printReport(array $data): array
 function flatten(array $items): array
 {
     $out = [];
-    foreach ($items as $item) {
+    foreach ($items as $key => $item) {
+        // {"<message>": ["/file", ...]}: the key is the message, the values are files.
+        if (is_string($key) && !in_array($key, ['message', 'messages', 'content', 'file', 'line', 'type'], true) && is_array($item)
+            && array_filter($item, 'is_string') === $item) {
+            foreach ($item === [] ? [''] : $item as $file) {
+                $out[] = $file === '' ? ['message' => $key] : ['message' => $key, 'file' => $file];
+            }
+            continue;
+        }
         if (is_string($item) && trim($item) !== '') {
-            $out[] = ['message' => trim($item)];
+            $out[] = ['message' => is_string($key) ? "$key: " . trim($item) : trim($item)];
         } elseif (is_array($item)) {
             if (isset($item['message']) && is_string($item['message'])) {
                 $out[] = $item;

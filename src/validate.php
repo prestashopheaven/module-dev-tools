@@ -257,6 +257,11 @@ function moduleDefines(string $dir, string $function): bool
  */
 function checkStructure(string $dir, array $rules, Report $r, array $skipDirs, bool $fromZip): void
 {
+    // .htaccess (the online validator reports a missing one under Security)
+    if (!is_file("$dir/.htaccess")) {
+        $r->error('security', 'Missing .htaccess in the module root (prevents listing/direct access of module files).', '.htaccess');
+    }
+
     // logo
     if (!is_file("$dir/logo.png")) {
         $r->error('structure', 'logo.png is missing in the module root.');
