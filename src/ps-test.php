@@ -219,9 +219,9 @@ final class Shop
     public function smoke(): array
     {
         $problems = [];
-        // Home, cart, a category (id 3 exists in the demo data) and the search page. Note: in dev
-        // mode "index.php?id_category=2&controller=category" is only a "page has moved" stub.
-        foreach (['/', '/index.php?controller=cart', '/index.php?id_category=3&controller=category', '/index.php?controller=search&s=a'] as $path) {
+        // Home, cart and a category of the demo data. Use the friendly URL: in dev mode a
+        // non-canonical URL (index.php?id_category=...) only returns a "page has moved" stub.
+        foreach (['/', '/index.php?controller=cart', '/3-clothes'] as $path) {
             [$status, $body] = httpGet("http://localhost:{$this->port}$path");
             if ($status !== 200) {
                 $problems[] = "$path returned HTTP $status";
