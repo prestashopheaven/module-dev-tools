@@ -236,6 +236,81 @@ final class Shop
         return ['ok' => $problems === [], 'output' => implode("\n", $problems)];
     }
 
+    /**
+     * Logs in to the back office and opens the pages a module most often breaks: the
+     * dashboard, Module Manager (a broken Symfony container fails here), the module's
+     * configuration page, every back-office link of the module in the menu, and a product
+     * edit page (product form extensions). Each must answer 200 without PHP errors.
+     *
+     * @param bool $configurable whether the module has a configuration page (getContent)
+     *
+     * @return array{ok: bool, output: string}
+     */
+    public function backOfficeSmoke(bool $configurable): array
+    {
+        $name = $this->config['module'];
+        $base = "http://localhost:{$this->port}";
+        $admin = "$base/admin-dev/index.php";
+        $jar = tempnam(sys_get_temp_dir(), 'psbo');
+        $problems = [];
+
+        [, $loginPage, $loginUrl] = curlRequest($admin . '?controller=AdminLogin', $jar);
+        $fields = hiddenInputs($loginPage);
+        $fields['email'] = 'demo@prestashop.com';
+        $fields['passwd'] = 'prestashop_demo';
+        $fields['submitLogin'] = '1';
+        [$code, $dashboard, $dashboardUrl] = curlRequest($loginUrl, $jar, $fields);
+        if (!preg_match('/_token=([A-Za-z0-9_\-.]+)/', $dashboard . $dashboardUrl, $m)) {
+            @unlink($jar);
+
+            return ['ok' => false, 'output' => "Back-office login failed (HTTP $code, landed on $dashboardUrl)."];
+        }
+        $token = $m[1];
+        $symfony = static fn (string $path): string => $admin . $path . (str_contains($path, '?') ? '&' : '?') . '_token=' . $token;
+
+        $pages = ['dashboard' => null, 'Module Manager' => $symfony('/improve/modules/manage')];
+        if ($configurable) {
+            $pages['module configuration'] = $symfony('/improve/modules/manage/action/configure/' . $name);
+        }
+        // Menu links of the module (Symfony routes are prefixed with /modules/<name>, legacy
+        // controllers are called by class name).
+        preg_match_all('/href="([^"]*(?:\/modules\/' . preg_quote($name, '/') . '\/|controller=Admin' . preg_quote(ucfirst($name), '/') . ')[^"]*)"/i', $dashboard, $links);
+        foreach (array_unique($links[1]) as $i => $link) {
+            $link = html_entity_decode($link);
+            $pages['menu link ' . ($i + 1)] = str_starts_with($link, 'http') ? $link : $base . $link;
+        }
+        // Product edit page: /products-v2/ on PS 8, /products/ on PS 9.
+        $pages['product edit page'] = [$symfony('/sell/catalog/products-v2/1/edit'), $symfony('/sell/catalog/products/1/edit')];
+
+        foreach ($pages as $label => $urls) {
+            if ($urls === null) {
+                $result = [$code, $dashboard, $dashboardUrl];
+            } else {
+                foreach ((array) $urls as $url) {
+                    $result = curlRequest($url, $jar);
+                    if ($result[0] !== 404) {
+                        break;
+                    }
+                }
+            }
+            [$status, $body, $finalUrl] = $result;
+            if ($status !== 200) {
+                $problems[] = "$label: HTTP $status ($finalUrl)";
+                continue;
+            }
+            foreach (['Fatal error', 'Parse error', 'Warning: ', 'Notice: ', 'Uncaught ', 'Stack trace', 'Invalid token'] as $needle) {
+                if (stripos($body, $needle) !== false) {
+                    $pos = (int) stripos($body, $needle);
+                    $problems[] = "$label contains '" . trim($needle) . "': " . substr(trim((string) preg_replace('/\s+/', ' ', strip_tags(substr($body, max(0, $pos - 100), 400)))), 0, 300);
+                    break;
+                }
+            }
+        }
+        @unlink($jar);
+
+        return ['ok' => $problems === [], 'output' => implode("\n", $problems)];
+    }
+
     /** @return array{ok: bool, output: string} */
     public function integration(): array
     {
@@ -318,6 +393,7 @@ function runMatrix(array $versions, array $flags): int
         $fresh = $shop->snapshot();
         $results['installed state'] = check($fresh['installed'] && $fresh['active'], 'Module not installed/active after install.');
         $results['smoke (front pages)'] = $shop->smoke();
+        $results['smoke (back office)'] = $shop->backOfficeSmoke((bool) ($fresh['configurable'] ?? false));
 
         if (!empty($suites['integration']) && !in_array('--skip-integration', $flags, true)) {
             $results['integration'] = $shop->integration();
@@ -440,6 +516,7 @@ function releaseZipTest(Shop $shop, ?string $zip, array $fresh): array
     $results['release zip: install'] = $shop->console('install');
     $results['release zip: state'] = compareSnapshots($fresh, $shop->snapshot());
     $results['release zip: smoke'] = $shop->smoke();
+    $results['release zip: back office'] = $shop->backOfficeSmoke((bool) ($fresh['configurable'] ?? false));
     $results['release zip: uninstall'] = $shop->console('uninstall');
     $results['release zip: leaves nothing'] = cleanCheck($shop->snapshot());
     removeDir($work);
@@ -638,6 +715,52 @@ function httpGet(string $url): array
     }
 
     return [$status, (string) $body];
+}
+
+/**
+ * HTTP request with a cookie jar (back-office session), following redirects.
+ *
+ * @param array<string, string>|null $post form fields for a POST request
+ *
+ * @return array{0: int, 1: string, 2: string} [status, body, final URL]
+ */
+function curlRequest(string $url, string $jar, ?array $post = null): array
+{
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS => 10,
+        CURLOPT_COOKIEJAR => $jar,
+        CURLOPT_COOKIEFILE => $jar,
+        CURLOPT_TIMEOUT => 180,
+    ]);
+    if ($post !== null) {
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($post));
+    }
+    $body = (string) curl_exec($ch);
+
+    return [(int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE), $body, (string) curl_getinfo($ch, CURLINFO_EFFECTIVE_URL)];
+}
+
+/**
+ * Hidden input fields of the first form in the HTML (login form tokens).
+ *
+ * @return array<string, string>
+ */
+function hiddenInputs(string $html): array
+{
+    $fields = [];
+    preg_match_all('/<input[^>]*type="hidden"[^>]*>/i', $html, $inputs);
+    foreach ($inputs[0] as $input) {
+        if (preg_match('/name="([^"]+)"/', $input, $n)) {
+            preg_match('/value="([^"]*)"/', $input, $v);
+            $fields[html_entity_decode($n[1])] = html_entity_decode($v[1] ?? '');
+        }
+    }
+
+    return $fields;
 }
 
 /** @param string[] $exclude directory names to skip */

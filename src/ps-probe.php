@@ -30,6 +30,9 @@ $name = $argv[1];
 $prefix = $argv[2];
 $db = Db::getInstance();
 
+$instance = Module::getInstanceByName($name);
+$configurable = $instance instanceof Module && method_exists($instance, 'getContent');
+
 $module = $db->getRow('SELECT id_module, version, active FROM `' . _DB_PREFIX_ . 'module` WHERE name = \'' . pSQL($name) . '\'');
 $idModule = $module ? (int) $module['id_module'] : 0;
 
@@ -92,5 +95,6 @@ echo json_encode([
     'configuration' => $config,
     'tabs' => $tabs,
     'overrides' => $overrides,
+    'configurable' => $configurable,
     'tables' => $tables,
 ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
