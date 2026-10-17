@@ -207,8 +207,9 @@ function checkIdentity(string $dir, string $name, array $rules, Report $r): void
     if (preg_match('/\$this->tab\s*=\s*[\'"]([^\'"]+)[\'"]/', $code, $t) && !in_array($t[1], $identity['Tab values'], true)) {
         $r->error('identity', "Tab '{$t[1]}' is not accepted. Use one of: " . implode(', ', $identity['Tab values']), "$name.php");
     }
-    if (!preg_match('/function\s+install\s*\(/', $code)) {
-        $r->warning('identity', 'No install() method in the main class.', "$name.php");
+    // install() may come from a trait (ModuleBase in prestashopheaven/module-kit).
+    if (!preg_match('/function\s+install\s*\(/', $code) && !moduleDefines($dir, 'install')) {
+        $r->warning('identity', 'No install() method in the main class or its traits.', "$name.php");
     }
     if (is_file("$dir/config.xml") && isset($v[1])) {
         $xml = (string) file_get_contents("$dir/config.xml");
@@ -216,6 +217,22 @@ function checkIdentity(string $dir, string $name, array $rules, Report $r): void
             $r->error('identity', "config.xml version {$x[1]} differs from the class version {$v[1]}.", 'config.xml');
         }
     }
+}
+
+/**
+ * True when any PHP file of the module (vendor/ included) declares the given function or method.
+ */
+function moduleDefines(string $dir, string $function): bool
+{
+    $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS));
+    foreach ($it as $file) {
+        if (str_ends_with($file->getFilename(), '.php')
+            && preg_match('/function\s+' . preg_quote($function, '/') . '\s*\(/', (string) file_get_contents($file->getPathname()))) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 /**
