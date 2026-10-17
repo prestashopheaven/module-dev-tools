@@ -1,5 +1,5 @@
 # Throw-away PrestaShop test shop, one project per PrestaShop version.
-# Started by tools/ps-test.php; it sets PS_VERSION, PS_PORT and the project name.
+# Started by ps-module shops (src/ps-test.php); it sets PS_VERSION, PS_PORT and the project name.
 services:
   db:
     image: ${DB_IMAGE:-mysql:8.0}
