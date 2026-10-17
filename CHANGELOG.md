@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.5.0] - 2026-10-17
+
+### Toegevoegd
+- `ps-module context`: `<repo>/CONTEXT.md` met Notes (door Claude) en een uit de code gegenereerd
+  overzicht (identiteit, hooks met implementatie, configuratie, tabs, codekaart, routes, services,
+  bestanden, database, vertalingen, docs). Weigert als de code veranderde maar de Notes niet.
+  `--generate` en `--status`; `ps-module status` toont de contextstatus.
+- `context_workspace()`: overzicht van alle modules en packages in een werkmap.
+
 ## [1.4.1] - 2026-10-17
 
 ### Opgelost
