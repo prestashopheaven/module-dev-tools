@@ -1,37 +1,38 @@
 {
-  "name": "prestashopheaven/module-dev-tools",
-  "description": "Development tooling for PrestaShopHeaven PrestaShop modules: validator pre-check, release zip with scoped vendor, Docker test shops, PHPStan against PrestaShop 8 and 9, conventions check and definition-of-done stamps.",
-  "type": "library",
-  "license": "AFL-3.0",
-  "authors": [
-    {
-      "name": "George van Engers",
-      "email": "vanengers@gmail.com"
-    }
-  ],
-  "require": {
-    "php": ">=8.1",
-    "ext-json": "*",
-    "ext-zip": "*",
-    "friendsofphp/php-cs-fixer": "^3.95",
-    "php-parallel-lint/php-parallel-lint": "^1.4",
-    "phpstan/phpstan": "^2.1",
-    "phpunit/phpunit": "^10.5",
-    "prestashop/autoindex": "^3.0",
-    "prestashop/header-stamp": "^3.1",
-    "prestashop/php-dev-tools": "^5.0",
-    "squizlabs/php_codesniffer": "^3.13.3 || ^4.0"
-  },
-  "suggest": {
-    "phpcompatibility/php-compatibility": "Require \"^10.0@alpha\" in the module itself (alpha stability must be allowed by the root package)."
-  },
-  "bin": [
-    "bin/ps-module"
-  ],
-  "config": {
-    "platform": {
-      "php": "8.1.0"
+    "name": "prestashopheaven/module-dev-tools",
+    "description": "Development tooling for PrestaShopHeaven PrestaShop modules: validator pre-check, release zip with scoped vendor, Docker test shops, PHPStan against PrestaShop 8 and 9, conventions check and definition-of-done stamps.",
+    "version": "1.0.0",
+    "type": "library",
+    "license": "AFL-3.0",
+    "authors": [
+        {
+            "name": "George van Engers",
+            "email": "vanengers@gmail.com"
+        }
+    ],
+    "require": {
+        "php": ">=8.1",
+        "ext-json": "*",
+        "ext-zip": "*",
+        "friendsofphp/php-cs-fixer": "^3.95",
+        "php-parallel-lint/php-parallel-lint": "^1.4",
+        "phpstan/phpstan": "^2.1",
+        "phpunit/phpunit": "^10.5",
+        "prestashop/autoindex": "^3.0",
+        "prestashop/header-stamp": "^3.1",
+        "prestashop/php-dev-tools": "^5.0",
+        "squizlabs/php_codesniffer": "^3.13.3 || ^4.0"
     },
-    "sort-packages": true
-  }
+    "suggest": {
+        "phpcompatibility/php-compatibility": "Require \"^10.0@alpha\" in the module itself (alpha stability must be allowed by the root package)."
+    },
+    "bin": [
+        "bin/ps-module"
+    ],
+    "config": {
+        "platform": {
+            "php": "8.1.0"
+        },
+        "sort-packages": true
+    }
 }
