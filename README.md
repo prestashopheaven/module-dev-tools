@@ -18,7 +18,7 @@ Ontwikkeltools voor PrestaShopHeaven-modules. Installeer als `require-dev`; alle
 | `ps-module context [--no-notes\|--generate\|--status]` | `<repo>/CONTEXT.md`: Notes (door Claude) + gegenereerd codeoverzicht; geïmporteerd door de `CLAUDE.md` van de repo |
 | `ps-module git <cmd>` | Git-werkwijze (GIT-01..07): `status [--remote]`, `start <naam> [--fix]`, `pr` (push + PR via `gh` of GitLab-MR), `finish` (na de merge opruimen), `later` |
 | `ps-module index` | `index.php` van de module in elke map zonder (niet in `vendor/`, volgt geen symlinks) |
-| `ps-module docs <cmd>` | Handleidingen (HTML + PDF), marketingteksten (Addons) en screenshots per taal in `<repo>/docs/`: `init`, `status`, `check`, `screenshots`, `manual`, `marketing`, `build`, `mark-translated`, `preview`, `doctor` |
+| `ps-module docs <cmd>` | Handleidingen (HTML + PDF), marketingteksten (Addons) en screenshots per taal in `<repo>/docs/`: `init`, `status`, `check`, `screenshots`, `frames`, `manual`, `marketing`, `build`, `mark-translated`, `preview`, `doctor` |
 | `ps-module status` | Welke stappen op de huidige code geslaagd zijn |
 | `ps-module skip <stap> "<reden>"` | Stap die echt niet kan draaien (wordt gemeld) |
 
@@ -88,6 +88,25 @@ en `docs/index.html`. Daarna staat de stap `docs` in de definition of done.
   Latijn/Cyrillisch/Grieks). Lukt niets, dan blijft de printklare HTML staan en meldt `build` dat.
 - `ps-module docs status` toont per taal precies welk bestand of veld ontbreekt of verouderd is;
   `ps-module docs preview <iso>` zet PDF-pagina's om naar PNG om het resultaat te bekijken.
+
+### Screenshots in een frame (`ps-module docs frames`)
+
+Elke screenshot wordt in het frame van de module gezet: een kader met het bijschrift in de taal erop
+gedrukt, de screenshot in een browservenster, telefoon of tablet, en onderaan logo, naam en `1 / 4`.
+Resultaat: `docs/framed/<iso>/<id>.png` (standaard 1600 x 1200, de productafbeeldingen voor Addons). De
+handleidingen, de marketingbladen en `docs/index.html` gebruiken ze ook.
+
+- Sjabloon (voor alle modules gelijk): `resources/docs/frame/frame.html` + `frame.css`.
+- Stijl per module: `docs/docs.json > frame` (`background`, `frame`, `text`, `accent`, `device`, `width`,
+  `height`, `caption` top/bottom, `radius`; optioneel `font`, `address`, `logo`, `counter`, `manual`,
+  `enabled`, `engines`). `docs init` geeft elke module een beginstijl uit `resources/docs/frame/styles.json`
+  (gekozen op de modulenaam); Claude past die aan op de module. De tekst moet minstens 4.5:1 contrast
+  hebben met het frame.
+- Eigen CSS: `docs/content/frame.css`; een volledig eigen sjabloon: `docs/content/frame.html`.
+- Bijschriften: `docs/content/<iso>/screenshots.json`, `{"<id>": {"title": "..", "text": ".."}}`, vertaald
+  zoals de handleiding (`docs mark-translated <iso> screenshots`).
+- Rendert in de docs-tools-image, anders met een lokale Chrome/Edge; alleen wat veranderd is
+  (`docs/framed/manifest.json`), `--force` voor alles.
 
 ## Gedeelde configuratie
 

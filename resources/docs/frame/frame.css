@@ -1,0 +1,151 @@
+/*
+ * Base style of the screenshot frame (frame.html). The module's own style comes after it:
+ * the variables from docs/docs.json > frame (:root below is overwritten), then docs/content/frame.css.
+ */
+:root {
+    --canvas-w: 1600px;
+    --canvas-h: 1200px;
+    --bg: linear-gradient(135deg, #1f4fd1 0%, #0b1f5c 100%);
+    --frame: #ffffff;
+    --text: #101828;
+    --accent: #1f4fd1;
+    --radius: 28px;
+    --font: "Noto Sans", "Segoe UI", Arial, sans-serif;
+    --title-size: 54px;
+    --text-size: 26px;
+    --pad: 56px;
+    --device: #111827;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; width: var(--canvas-w); height: var(--canvas-h); overflow: hidden; }
+body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: geometricPrecision;
+}
+
+.canvas { width: 100%; height: 100%; padding: var(--pad); display: flex; }
+
+/* The frame: the box around the screenshot that carries the caption. */
+.frame {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--frame);
+    border-radius: var(--radius);
+    padding: 44px 52px 26px;
+    box-shadow: 0 40px 90px rgba(0, 0, 0, .28), 0 4px 14px rgba(0, 0, 0, .12);
+}
+
+.caption { flex: none; }
+.caption-mark { display: block; width: 72px; height: 8px; border-radius: 4px; background: var(--accent); margin-bottom: 22px; }
+.caption h1 {
+    margin: 0;
+    font-size: var(--title-size);
+    line-height: 1.12;
+    font-weight: 800;
+    letter-spacing: -.01em;
+    overflow-wrap: anywhere;
+}
+.caption .text {
+    margin: 14px 0 0;
+    max-width: 88%;
+    font-size: var(--text-size);
+    line-height: 1.42;
+    opacity: .78;
+}
+
+.stage {
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 30px 0 18px;
+}
+
+/* The device around the screenshot. */
+.device { margin: 0; display: flex; flex-direction: column; background: #fff; overflow: hidden; }
+.screen { line-height: 0; }
+.shot { display: block; width: 1px; height: 1px; }
+
+.device-desktop .device, .device-custom .device {
+    border-radius: 14px;
+    border: 1px solid rgba(0, 0, 0, .14);
+    box-shadow: 0 24px 60px rgba(15, 23, 42, .28);
+}
+.chrome { display: none; }
+.device-desktop .chrome, .device-custom .chrome {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    height: 44px;
+    padding: 0 18px;
+    background: #eef1f5;
+    border-bottom: 1px solid rgba(0, 0, 0, .08);
+}
+.dots { display: flex; gap: 8px; direction: ltr; }
+.dots i { display: block; width: 13px; height: 13px; border-radius: 50%; background: #ff5f57; }
+.dots i:nth-child(2) { background: #febc2e; }
+.dots i:nth-child(3) { background: #28c840; }
+.address {
+    flex: 1;
+    min-width: 0;
+    height: 26px;
+    border-radius: 13px;
+    background: #fff;
+    color: #667085;
+    font-size: 14px;
+    line-height: 26px;
+    padding: 0 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.device-mobile .device {
+    border: 14px solid var(--device);
+    border-radius: 54px;
+    box-shadow: 0 30px 70px rgba(15, 23, 42, .35);
+}
+.device-mobile .screen { border-radius: 40px; overflow: hidden; }
+.device-tablet .device {
+    border: 18px solid var(--device);
+    border-radius: 40px;
+    box-shadow: 0 30px 70px rgba(15, 23, 42, .32);
+}
+.device-tablet .screen { border-radius: 22px; overflow: hidden; }
+
+.device-element .device {
+    border-radius: 16px;
+    border: 1px solid rgba(0, 0, 0, .1);
+    box-shadow: 0 18px 50px rgba(15, 23, 42, .22);
+}
+
+/* Portrait screenshots (phone, tablet upright): the caption next to the device. */
+.layout-portrait .frame { flex-direction: row; flex-wrap: wrap; align-content: stretch; padding: 52px 56px 26px; }
+.layout-portrait .caption { flex: 0 0 44%; align-self: center; padding-inline-end: 40px; }
+.layout-portrait .caption .text { max-width: none; }
+.layout-portrait .stage { flex: 1 1 0; height: calc(100% - 52px); margin: 0; }
+.layout-portrait .brand { flex: 0 0 100%; }
+
+.brand {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    height: 40px;
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text);
+    opacity: .7;
+}
+.brand-logo { width: 36px; height: 36px; border-radius: 8px; object-fit: contain; }
+.brand-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.counter { font-variant-numeric: tabular-nums; direction: ltr; unicode-bidi: isolate; color: var(--accent); }

@@ -190,6 +190,7 @@ figure img {
     box-shadow: 0 2px 10px rgba(20, 30, 60, .10);
 }
 figure.mobile img, figure.tablet img { max-width: 70mm; max-height: 125mm; }
+figure.framed img { border: 0; border-radius: 3mm; box-shadow: 0 2px 12px rgba(20, 30, 60, .14); max-height: 125mm; }
 figcaption { font-size: 9pt; color: var(--muted); margin-top: 2mm; }
 figcaption::before { content: "▲ "; color: #9fb3ea; font-size: 7pt; }
 img.inline { max-height: 1.4em; vertical-align: middle; }

@@ -1,0 +1,17 @@
+{
+  "_comment": "Starting styles for the screenshot frame. 'ps-module docs init' gives each module one of them (chosen by its name), written into docs/docs.json > frame; Claude then adapts it to the module (colours of the logo, the theme of the module). 'background' is any CSS background (colour or gradient); 'frame' is the box that carries the caption; 'text' must contrast with 'frame' (at least 4.5:1).",
+  "styles": [
+    { "name": "ocean",    "background": "linear-gradient(135deg, #1f4fd1 0%, #0b1f5c 100%)", "frame": "#ffffff", "text": "#101828", "accent": "#1f4fd1", "device": "#111827" },
+    { "name": "lagoon",   "background": "linear-gradient(135deg, #0f766e 0%, #064e3b 100%)", "frame": "#ffffff", "text": "#0b2a26", "accent": "#0f766e", "device": "#0b1513" },
+    { "name": "sunset",   "background": "linear-gradient(135deg, #f97316 0%, #be123c 100%)", "frame": "#fffaf5", "text": "#2b1208", "accent": "#e2531a", "device": "#1c1917" },
+    { "name": "plum",     "background": "linear-gradient(135deg, #7c3aed 0%, #3b0764 100%)", "frame": "#ffffff", "text": "#1e1033", "accent": "#7c3aed", "device": "#1a1028" },
+    { "name": "forest",   "background": "linear-gradient(135deg, #3f6212 0%, #1a2e05 100%)", "frame": "#fbfdf7", "text": "#16210a", "accent": "#4d7c0f", "device": "#141a0c" },
+    { "name": "graphite", "background": "linear-gradient(135deg, #334155 0%, #0f172a 100%)", "frame": "#f8fafc", "text": "#0f172a", "accent": "#0ea5e9", "device": "#0b1120" },
+    { "name": "ruby",     "background": "linear-gradient(135deg, #dc2626 0%, #7f1d1d 100%)", "frame": "#ffffff", "text": "#250b0b", "accent": "#c81e1e", "device": "#1c0f0f" },
+    { "name": "gold",     "background": "linear-gradient(135deg, #f59e0b 0%, #92400e 100%)", "frame": "#fffdf7", "text": "#2a1a03", "accent": "#b45309", "device": "#1c1408" },
+    { "name": "night",    "background": "radial-gradient(circle at 20% 15%, #312e81 0%, #0b0a1f 70%)", "frame": "#15132e", "text": "#f5f3ff", "accent": "#a78bfa", "device": "#000000" },
+    { "name": "mint",     "background": "linear-gradient(135deg, #34d399 0%, #0e7490 100%)", "frame": "#ffffff", "text": "#062a2e", "accent": "#0e7490", "device": "#0b1a1c" },
+    { "name": "rose",     "background": "linear-gradient(135deg, #f472b6 0%, #9d174d 100%)", "frame": "#fff7fb", "text": "#2d0a1c", "accent": "#be185d", "device": "#1f0d16" },
+    { "name": "sand",     "background": "linear-gradient(135deg, #e7d8c3 0%, #a68a64 100%)", "frame": "#ffffff", "text": "#2b2116", "accent": "#8a5a2b", "device": "#1f1a14" }
+  ]
+}

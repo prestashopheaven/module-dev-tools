@@ -23,19 +23,23 @@
  *                                        screenshots in a Docker test shop (testing.json), per language
  *   ps-module docs manual [<iso>...] [--no-pdf]
  *                                        render docs/manual/<iso>/manual.html (+ PDF), also with open problems
+ *   ps-module docs frames [<iso>...] [--only=<id,...>] [--force]
+ *                                        put the screenshots in the frame of the module: docs/framed/<iso>/<id>.png
  *   ps-module docs marketing [<iso>...]  render docs/marketing/<iso>/marketing.html, .md and .json
  *   ps-module docs build [--no-screenshots] [--screenshots] [--keep]
- *                                        definition of done: check + screenshots (when out of date) + manuals
- *                                        + PDF + marketing + docs/index.html; records the 'docs' step
- *   ps-module docs mark-translated <iso|all> [manual|marketing]
+ *                                        definition of done: check + screenshots (when out of date) + framed
+ *                                        screenshots + manuals + PDF + marketing + docs/index.html; records 'docs'
+ *   ps-module docs mark-translated <iso|all> [manual|marketing|screenshots]
  *                                        record that a translation is up to date with the source language
  *   ps-module docs preview <iso> [--pages=1-3]
  *                                        PDF pages as PNG in .cache/docs/preview/ (to look at the result)
  *   ps-module docs doctor                which screenshot and PDF engines are available here
  *
  * Content (written by Claude): docs/content/<iso>/manual.md, docs/content/<iso>/marketing.json,
- * docs/docs.json > marketing (category, price, benefits, multistore) and docs/content/logo-suggestion.svg.
- * Generated: docs/screenshots/<iso>/<id>.png, docs/manual/<iso>/manual.html + readme_<iso>.pdf (the Addons name: ps-module build copies it to <module>/docs/),
+ * docs/content/<iso>/screenshots.json (captions on the frames), docs/docs.json > marketing (category, price,
+ * benefits, multistore) and > frame (the style of the module's screenshot frame), docs/content/logo-suggestion.svg,
+ * optionally docs/content/frame.css / frame.html (own frame CSS or template).
+ * Generated: docs/screenshots/<iso>/<id>.png, docs/framed/<iso>/<id>.png, docs/manual/<iso>/manual.html + readme_<iso>.pdf (the Addons name: ps-module build copies it to <module>/docs/),
  * docs/marketing/<iso>/marketing.{html,md,json}, docs/index.html, docs/build-manifest.json.
  */
 
@@ -45,9 +49,11 @@ require_once __DIR__ . '/dod.php';
 require_once __DIR__ . '/docs-markdown.php';
 require_once __DIR__ . '/docs-render.php';
 require_once __DIR__ . '/docs-shots.php';
+require_once __DIR__ . '/docs-frames.php';
 
 const DOCS_RESOURCES = __DIR__ . '/../resources';
 const DOCS_TODO = '/\bTODO:/';
+const DOCS_FRAME_HELP = "The style of this module's screenshot frame. Every screenshot is rendered into it with its caption from docs/content/<iso>/screenshots.json printed on the frame: docs/framed/<iso>/<id>.png (Addons product images; the manuals use them too). style: name of the starting style (resources/docs/frame/styles.json); background: CSS colour or gradient behind the frame; frame: colour of the frame that carries the caption; text: caption colour (contrast with frame at least 4.5:1); accent: mark above the caption and counter; device: colour of phone/tablet bezels; width/height: image size in px (Addons: at least 1000x1000); caption: 'top'|'bottom' (portrait screenshots: next to the device); radius: corner radius in px. Optional: font (an installed font family), address (text in the browser address bar), logo (false: no module logo), counter (false: no '1 / 4'), manual (false: manuals use the raw screenshots), enabled (false: no frames), engines (['docker','chrome']). Own CSS: docs/content/frame.css; own template: docs/content/frame.html (start from resources/docs/frame/frame.html).";
 const DOCS_RENDER_PLACEHOLDERS = ['version', 'display_name', 'module_name', 'ps_min', 'ps_tested', 'php_min', 'author'];
 
 if (PHP_SAPI === 'cli' && realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === realpath(__FILE__)) {
@@ -89,6 +95,8 @@ function docs_main(array $argv): int
             return docs_cmd_screenshots($ctx, $flags);
         case 'manual':
             return docs_cmd_manual($ctx, $args, !in_array('--no-pdf', $flags, true));
+        case 'frames':
+            return docs_cmd_frames($ctx, $args, $flags);
         case 'marketing':
             return docs_cmd_marketing($ctx, $args);
         case 'build':
@@ -414,13 +422,16 @@ function docs_validate(array $ctx): array
         }
     }
     docs_validate_config($ctx, $config, $add);
+    docs_validate_frame($ctx, $add);
     docs_validate_marketing_common($ctx, (array) ($config['marketing'] ?? []), $add);
 
     $sourceManual = docs_load_manual($ctx, $ctx['source']);
     $sourceMarketing = docs_load_marketing($ctx, $ctx['source']);
+    $sourceCaptions = docs_load_captions($ctx, $ctx['source']);
     foreach ($ctx['languages'] as $iso) {
         docs_validate_manual($ctx, $iso, $sourceManual, $add);
         docs_validate_marketing($ctx, $iso, $sourceMarketing, $add);
+        docs_validate_captions($ctx, $iso, $sourceCaptions, $add);
     }
 
     return $issues;
@@ -911,7 +922,8 @@ function docs_addons_screenshot_check(array $ctx): array
     foreach ($ctx['languages'] as $iso) {
         $large = [];
         foreach ((array) ($ctx['config']['screenshots'] ?? []) as $shot) {
-            $file = docs_screenshot_file($ctx, $iso, (string) ($shot['id'] ?? ''));
+            $framed = docs_framed_file($ctx, $iso, (string) ($shot['id'] ?? ''));
+            $file = $framed !== '' ? $framed : docs_screenshot_file($ctx, $iso, (string) ($shot['id'] ?? ''));
             $size = $file !== null ? @getimagesize($file) : false;
             if ($size !== false && $size[0] >= $rule['min_width'] && $size[1] >= $rule['min_height']) {
                 $large[] = $shot['id'];
@@ -1018,9 +1030,45 @@ function docs_cmd_init(array $ctx): int
         $created[] = docs_rel($ctx, $path);
     }
     $ctx['config'] = docs_read_json($ctx['docs'] . '/docs.json');
+    // The style of the screenshot frame: a starting style per module (by its name), adapted by Claude afterwards.
+    if (is_array($ctx['config']) && !isset($ctx['config']['frame'])) {
+        $config = [];
+        foreach ($ctx['config'] as $key => $value) {
+            $config[$key] = $value;
+            if ($key === 'screenshots') {
+                $config['frame'] = docs_frame_style_for($ctx['module']);
+            }
+        }
+        $config['frame'] ??= docs_frame_style_for($ctx['module']);
+        if (is_array($config['_help'] ?? null) && !isset($config['_help']['frame'])) {
+            $config['_help']['frame'] = DOCS_FRAME_HELP;
+        }
+        docs_write_json($ctx['docs'] . '/docs.json', $config);
+        $ctx['config'] = $config;
+        $created[] = 'docs/docs.json > frame (starting style "' . $config['frame']['style'] . '": adapt the colours to the module)';
+    }
+    $captionsFile = docs_captions_file($ctx, $ctx['source']);
+    if ((array) ($ctx['config']['screenshots'] ?? []) !== []) {
+        $existing = docs_load_captions($ctx, $ctx['source']);
+        if ($existing === null || !isset($existing['_error'])) {
+            $captions = docs_captions_skeleton($ctx, $existing ?? []);
+            if ($existing === null || array_keys($captions) !== array_keys($existing)) {
+                docs_write_json($captionsFile, $captions);
+                $created[] = docs_rel($ctx, $captionsFile) . ($existing === null ? '' : ' (captions added for new screenshots)');
+            }
+        }
+    }
     foreach ($ctx['languages'] as $iso) {
         if ($iso === $ctx['source']) {
             continue;
+        }
+        $captionsFile = docs_captions_file($ctx, $iso);
+        $sourceCaptions = docs_load_captions($ctx, $ctx['source']);
+        if (!is_file($captionsFile) && $sourceCaptions !== null && !isset($sourceCaptions['_error'])) {
+            $sourceCaptions['_meta']['language'] = $iso;
+            unset($sourceCaptions['_meta']['translated_from']);
+            docs_write_json($captionsFile, $sourceCaptions);
+            $created[] = docs_rel($ctx, $captionsFile) . ' (copy of ' . $ctx['source'] . ', to translate)';
         }
         $manualFile = docs_content_file($ctx, $iso, 'manual');
         $source = docs_load_manual($ctx, $ctx['source']);
@@ -1066,9 +1114,12 @@ function docs_cmd_status(array $ctx, bool $json): int
     echo "Docs of {$ctx['module']} {$ctx['version']} - languages: " . implode(' ', $ctx['languages']) . " (source: {$ctx['source']})\n";
     foreach (array_merge(['*'], $ctx['languages']) as $iso) {
         $list = array_values(array_filter($issues, static fn (array $i): bool => $i['lang'] === $iso));
-        foreach ([['manual', 'manual.md'], ['marketing', 'marketing.json']] as [, $name]) {
+        foreach ([['manual', 'manual.md'], ['marketing', 'marketing.json'], ['screenshots', 'screenshots.json']] as [$kind, $name]) {
             if ($iso === '*') {
                 break;
+            }
+            if ($kind === 'screenshots' && !docs_frames_enabled($ctx)) {
+                continue;
             }
             $mine = array_filter($list, static fn (array $i): bool => str_ends_with($i['file'], "/$iso/$name"));
             if ($mine === []) {
@@ -1080,6 +1131,13 @@ function docs_cmd_status(array $ctx, bool $json): int
         }
     }
     echo '  screenshots         ' . $shots['message'] . "\n";
+    if (docs_frames_enabled($ctx)) {
+        $frames = docs_frames_state($ctx);
+        $frameConfig = docs_frame_config($ctx);
+        echo '  framed screenshots  ' . ($frames['state'] === 'ok'
+            ? 'ok (' . $frameConfig['width'] . 'x' . $frameConfig['height'] . ', style ' . (string) ($frameConfig['style'] ?? 'custom') . ')'
+            : 'missing: ' . implode(' ', array_slice($frames['missing'], 0, 8)) . (count($frames['missing']) > 8 ? ' ...' : '') . ' (run: ps-module docs frames)') . "\n";
+    }
     echo '  generated output    ' . $outputs['message'] . "\n";
     $dod = dod_status($ctx['repo'])['steps']['docs'] ?? null;
     if ($dod !== null) {
@@ -1186,6 +1244,36 @@ function docs_cmd_marketing(array $ctx, array $languages): int
 }
 
 /**
+ * Puts the screenshots of the given languages (default: all) into the frame of the module.
+ *
+ * @param array<string, mixed> $ctx
+ * @param string[] $languages
+ * @param string[] $flags
+ */
+function docs_cmd_frames(array $ctx, array $languages, array $flags): int
+{
+    $languages = $languages === [] ? $ctx['languages'] : array_values(array_intersect($languages, $ctx['languages']));
+    $only = [];
+    foreach ($flags as $flag) {
+        if (str_starts_with($flag, '--only=')) {
+            $only = array_values(array_filter(explode(',', substr($flag, 7))));
+        }
+    }
+    $issues = array_filter(docs_validate($ctx), static fn (array $i): bool => (in_array($i['lang'], $languages, true) && str_ends_with($i['file'], 'screenshots.json')) || ($i['lang'] === '*' && str_contains($i['message'], 'frame')));
+    if ($issues !== []) {
+        echo "Content problems (rendered anyway, 'docs build' refuses them):\n";
+        docs_print_issues(array_values($issues));
+    }
+    $result = docs_render_frames($ctx, $languages, $only, in_array('--force', $flags, true));
+    echo $result['message'] . "\n";
+    foreach (array_unique($result['warnings']) as $warning) {
+        echo "  warning: $warning\n";
+    }
+
+    return $result['ok'] ? 0 : 1;
+}
+
+/**
  * The definition-of-done step: validate, screenshots when out of date, render everything, record the 'docs' stamp.
  *
  * @param array<string, mixed> $ctx
@@ -1252,6 +1340,15 @@ function docs_cmd_build(array $ctx, array $flags): int
         foreach (docs_addons_screenshot_check($ctx) as $warning) {
             $warnings[] = $warning;
         }
+    }
+
+    if (docs_frames_enabled($ctx)) {
+        echo "\n-- Framed screenshots --\n";
+        $framed = docs_render_frames($ctx, $ctx['languages']);
+        echo $framed['message'] . "\n";
+        $warnings = array_merge($warnings, $framed['warnings']);
+        $frameState = docs_frames_state($ctx);
+        $notes[] = $frameState['state'] === 'ok' ? 'frames ok' : 'frames missing ' . count($frameState['missing']);
     }
 
     echo "\n-- Manuals --\n";
@@ -1325,9 +1422,9 @@ function docs_cmd_build(array $ctx, array $flags): int
 function docs_cmd_mark_translated(array $ctx, array $args): int
 {
     $target = $args[0] ?? '';
-    $kinds = isset($args[1]) ? [$args[1]] : ['manual', 'marketing'];
-    if ($target === '' || array_diff($kinds, ['manual', 'marketing']) !== []) {
-        fwrite(STDERR, "Usage: ps-module docs mark-translated <iso|all> [manual|marketing]\n");
+    $kinds = isset($args[1]) ? [$args[1]] : ['manual', 'marketing', 'screenshots'];
+    if ($target === '' || array_diff($kinds, ['manual', 'marketing', 'screenshots']) !== []) {
+        fwrite(STDERR, "Usage: ps-module docs mark-translated <iso|all> [manual|marketing|screenshots]\n");
 
         return 2;
     }
@@ -1371,6 +1468,25 @@ function docs_cmd_mark_translated(array $ctx, array $args): int
             $data['_meta']['translated_from'] = docs_marketing_hashes($source);
             docs_write_json(docs_content_file($ctx, $iso, 'marketing'), $data);
             echo "  $iso marketing.json: recorded as translated from the current {$ctx['source']} text\n";
+        }
+        if (in_array('screenshots', $kinds, true) && docs_frames_enabled($ctx)) {
+            $source = docs_load_captions($ctx, $ctx['source']);
+            $data = docs_load_captions($ctx, $iso);
+            if ($source === null || $data === null || isset($data['_error']) || isset($source['_error'])) {
+                echo "  $iso screenshots.json: missing or invalid\n";
+                $code = 1;
+                continue;
+            }
+            $state = docs_translation_state_captions($ctx, $iso, $data, $source);
+            $missing = array_diff(docs_caption_ids($ctx, $iso), array_keys($data));
+            if (str_starts_with($state, 'not translated') || $missing !== [] || preg_match(DOCS_TODO, (string) json_encode(array_diff_key($data, ['_help' => 1]), JSON_UNESCAPED_UNICODE))) {
+                echo "  $iso screenshots.json: NOT recorded: it still has TODOs, misses captions (" . implode(', ', $missing) . ") or has the {$ctx['source']} titles\n";
+                $code = 1;
+                continue;
+            }
+            $data['_meta']['translated_from'] = docs_caption_hashes($source);
+            docs_write_json(docs_captions_file($ctx, $iso), $data);
+            echo "  $iso screenshots.json: recorded as translated from the current {$ctx['source']} captions\n";
         }
     }
 

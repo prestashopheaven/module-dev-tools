@@ -295,7 +295,7 @@ function docs_md_figure(string $alt, string $src, callable $images): string
         return '<p class="note-missing">[missing image: ' . htmlspecialchars($src, ENT_QUOTES, 'UTF-8') . "]</p>\n";
     }
     $class = trim('figure ' . ($image['class'] ?? ''));
-    $caption = trim($alt) !== '' ? '<figcaption>' . docs_md_inline($alt, $images) . '</figcaption>' : '';
+    $caption = trim($alt) !== '' && ($image['caption'] ?? true) !== false ? '<figcaption>' . docs_md_inline($alt, $images) . '</figcaption>' : '';
 
     return '<figure class="' . docs_md_attr($class) . '"><img src="' . docs_md_attr($image['src']) . '" alt="' . docs_md_attr(docs_md_plain($alt)) . "\">$caption</figure>\n";
 }

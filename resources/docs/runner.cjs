@@ -20,6 +20,7 @@
  *   {type: "screenshots", base, admin, login: {email, password}, module, proxy: {port, host, target_port}, hide: [css], shots: [...]}
  *   {type: "pdf", items: [{html, out}]}
  *   {type: "svg-png", items: [{in, out, size}]}
+ *   {type: "frames", items: [{html, out, width, height}]}   screenshots in the frame template (docs-frames.php)
  *
  * The shop answers on http://localhost:<port> only (PS_DOMAIN). The container joins the
  * Docker network of the shop and forwards localhost:<port> to prestashop:80 with a small
@@ -323,6 +324,37 @@ async function svgPng(browser, task, results) {
 }
 
 /**
+ * Renders framed screenshots: each item is a filled frame.html page, captured at the canvas size.
+ * The page scales the screenshot itself and sets body[data-ready] when it is done.
+ */
+async function frames(browser, task, results) {
+    for (const item of task.items) {
+        const result = { task: 'frame', id: item.out, ok: false, error: '', out: item.out };
+        results.push(result);
+        let context = null;
+        try {
+            context = await browser.newContext({ viewport: { width: item.width, height: item.height }, deviceScaleFactor: 1 });
+            const page = await context.newPage();
+            await page.goto('file://' + item.html, { waitUntil: 'load', timeout: 60000 });
+            await page.waitForFunction(() => document.body && document.body.dataset.ready, null, { timeout: 30000 });
+            if ((await page.evaluate(() => document.body.dataset.ready)) !== '1') {
+                throw new Error('The screenshot could not be loaded into the frame.');
+            }
+            await page.evaluate(() => document.fonts.ready);
+            fs.mkdirSync(path.dirname(item.out), { recursive: true });
+            await page.screenshot({ path: item.out, clip: { x: 0, y: 0, width: item.width, height: item.height } });
+            result.ok = true;
+        } catch (e) {
+            result.error = String(e && e.message ? e.message : e).split('\n')[0];
+        } finally {
+            if (context) {
+                await context.close();
+            }
+        }
+    }
+}
+
+/**
  * Runs every task of the job and writes the result file next to it.
  */
 async function main() {
@@ -339,6 +371,8 @@ async function main() {
                     await pdf(browser, task, results);
                 } else if (task.type === 'svg-png') {
                     await svgPng(browser, task, results);
+                } else if (task.type === 'frames') {
+                    await frames(browser, task, results);
                 } else {
                     results.push({ task: task.type, ok: false, error: 'Unknown task type' });
                 }

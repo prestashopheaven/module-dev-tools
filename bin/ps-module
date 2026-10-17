@@ -30,8 +30,8 @@
  *   ps-module status [--json]        which definition-of-done steps passed on the current code
  *   ps-module skip <step> "<reason>" mark a step that cannot run (reported to the user)
  *   ps-module translations <command> extract | status | todo | apply | fill | auto | accept | prune | mails-ok | build | check
- *   ps-module docs <command>         init | status | check | screenshots | manual | marketing | build | mark-translated | preview | doctor:
- *                                    manuals (HTML + PDF), Addons marketing texts and screenshots in docs/
+ *   ps-module docs <command>         init | status | check | screenshots | frames | manual | marketing | build | mark-translated | preview | doctor:
+ *                                    manuals (HTML + PDF), Addons marketing texts, screenshots and framed screenshots in docs/
  *   ps-module git <command>          status [--remote] | start <name> [--fix] | pr | finish | later:
  *                                    feature branches, commit, push, pull/merge request, merge, clean up (GIT-01..07)
  *   ps-module context [--no-notes|--generate|--status]

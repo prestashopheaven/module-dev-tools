@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.7.0] - 2026-10-18
+
+### Toegevoegd
+- Screenshots in een frame: `ps-module docs frames` zet elke screenshot in het frame van de module, met het
+  bijschrift in de taal op het frame (`docs/framed/<iso>/<id>.png`). Sjabloon `resources/docs/frame/`,
+  stijl per module in `docs/docs.json > frame` (beginstijl uit `styles.json` via `docs init`), eigen CSS of
+  sjabloon in `docs/content/frame.css` / `frame.html`, bijschriften in `docs/content/<iso>/screenshots.json`.
+- `docs build` maakt de frames na de screenshots; handleidingen, marketingbladen (sectie
+  "Product images") en `docs/index.html` gebruiken ze. `docs status` en de validatie controleren stijl,
+  contrast, bijschriften en vertalingen; `docs mark-translated <iso> screenshots`.
+
 ## [1.6.0] - 2026-10-17
 
 ### Toegevoegd

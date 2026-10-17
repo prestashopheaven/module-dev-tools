@@ -222,6 +222,11 @@ function docs_manual_html(array $ctx, string $iso, array $manual, string $outDir
     $images = static function (string $src) use ($ctx, $iso, $outDir, $shots): ?array {
         if (str_starts_with($src, 'screenshot:')) {
             $id = substr($src, 11);
+            // The framed screenshot (caption printed on the frame, so no caption under it), else the raw one.
+            $framed = docs_frame_config($ctx)['manual'] !== false ? docs_framed_file($ctx, $iso, $id) : '';
+            if ($framed !== '') {
+                return ['src' => docs_relative_path($outDir, $framed), 'class' => 'framed', 'caption' => false];
+            }
             $file = docs_screenshot_file($ctx, $iso, $id);
             if ($file === null) {
                 return null;
@@ -879,6 +884,23 @@ function docs_render_marketing(array $ctx, string $iso, array $data, array $logo
             . '<footer>' . ($v['length'] > 0 ? $v['length'] . ($v['limit'] !== '' ? ' / ' . $v['limit'] : '') . ' characters' : '') . '</footer>'
             . "</section>\n";
     }
+    $images = '';
+    foreach ((array) ($ctx['config']['screenshots'] ?? []) as $shot) {
+        $id = (string) ($shot['id'] ?? '');
+        if (!empty($shot['languages']) && !in_array($iso, (array) $shot['languages'], true)) {
+            continue;
+        }
+        $file = docs_framed_file($ctx, $iso, $id);
+        $file = $file !== '' ? $file : (string) docs_screenshot_file($ctx, $iso, $id);
+        if ($file !== '') {
+            $rel = docs_relative_path($dir, $file);
+            $size = @getimagesize($file) ?: [0, 0];
+            $images .= '<figure><a href="' . docs_e($rel) . '" download><img src="' . docs_e($rel) . '" alt="" loading="lazy"></a><figcaption><b>' . docs_e($id) . '</b> ' . $size[0] . ' x ' . $size[1] . ' px</figcaption></figure>';
+        }
+    }
+    if ($images !== '') {
+        $cards .= '<section class="field" id="images"><header><span class="num">·</span><h2>Product images (screenshots)</h2></header><div class="value gallery">' . $images . "</div><footer>Upload these in this order; click an image to download it.</footer></section>\n";
+    }
     $css = (string) file_get_contents(DOCS_RESOURCES . '/docs/marketing.css');
     $languageLinks = '';
     foreach ($ctx['languages'] as $lang) {
@@ -991,10 +1013,13 @@ function docs_render_index(array $ctx, array $manifest): string
     $gallery = '';
     $shotManifest = docs_read_json($ctx['docs'] . '/screenshots/manifest.json') ?? [];
     foreach ((array) ($ctx['config']['screenshots'] ?? []) as $shot) {
-        $file = docs_screenshot_file($ctx, $ctx['source'], (string) $shot['id']);
+        $raw = docs_screenshot_file($ctx, $ctx['source'], (string) $shot['id']);
+        $framed = docs_framed_file($ctx, $ctx['source'], (string) $shot['id']);
+        $file = $framed !== '' ? $framed : $raw;
         if ($file !== null) {
             $rel = docs_relative_path($ctx['docs'], $file);
-            $gallery .= '<figure><a href="' . docs_e($rel) . '"><img src="' . docs_e($rel) . '" alt="" loading="lazy"></a><figcaption><b>' . docs_e((string) $shot['id']) . '</b> ' . docs_e((string) ($shot['title'] ?? '')) . '</figcaption></figure>';
+            $gallery .= '<figure><a href="' . docs_e($rel) . '"><img src="' . docs_e($rel) . '" alt="" loading="lazy"></a><figcaption><b>' . docs_e((string) $shot['id']) . '</b> ' . docs_e((string) ($shot['title'] ?? ''))
+                . ($framed !== '' && $raw !== null ? ' · <a href="' . docs_e(docs_relative_path($ctx['docs'], $raw)) . '">raw</a>' : '') . '</figcaption></figure>';
         }
     }
     $warnings = '';
@@ -1049,6 +1074,10 @@ function docs_outputs_state(array $ctx): array
                 $missing[$label][] = $iso;
             }
         }
+    }
+    $frames = docs_frames_state($ctx)['missing'];
+    if ($frames !== []) {
+        $missing['framed screenshots'][] = count($frames) . ' (' . implode(' ', array_slice($frames, 0, 4)) . (count($frames) > 4 ? ' ...' : '') . ')';
     }
     if ($missing !== []) {
         $parts = [];
