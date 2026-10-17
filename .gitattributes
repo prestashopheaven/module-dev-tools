@@ -1,1 +1,12 @@
 * text=auto eol=lf
+
+# Not part of the package (GitHub/Packagist dist zips and composer path-repository mirrors)
+/vendor export-ignore
+/.cache export-ignore
+/tests export-ignore
+/.gitattributes export-ignore
+/.gitignore export-ignore
+/.php-cs-fixer.dist.php export-ignore
+/phpcs.xml.dist export-ignore
+/phpunit.xml.dist export-ignore
+/composer.lock export-ignore
