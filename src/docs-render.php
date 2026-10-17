@@ -63,6 +63,30 @@ function docs_placeholders(array $ctx): array
 }
 
 /**
+ * The context for one language: the display name translated as in the module's own translation
+ * catalogue (<repo>/i18n/<iso>.json), so manuals and sheets use the same name as the shop.
+ *
+ * @param array<string, mixed> $ctx
+ *
+ * @return array<string, mixed>
+ */
+function docs_localize(array $ctx, string $iso): array
+{
+    $file = $ctx['repo'] . "/i18n/$iso.json";
+    $catalogue = is_file($file) ? json_decode((string) file_get_contents($file), true) : null;
+    foreach ((array) ($catalogue['strings'] ?? []) as $texts) {
+        $translation = ((array) $texts)[(string) $ctx['display_name']] ?? null;
+        $text = is_array($translation) ? (string) ($translation['text'] ?? '') : (string) $translation;
+        if ($text !== '') {
+            $ctx['display_name'] = $text;
+            break;
+        }
+    }
+
+    return $ctx;
+}
+
+/**
  * Replaces {{placeholders}} in a text.
  *
  * @param array<string, mixed> $ctx
@@ -189,6 +213,7 @@ function docs_render_manuals(array $ctx, array $languages, array &$manifest): ar
  */
 function docs_manual_html(array $ctx, string $iso, array $manual, string $outDir): string
 {
+    $ctx = docs_localize($ctx, $iso);
     $meta = $manual['meta'];
     $shots = [];
     foreach ((array) ($ctx['config']['screenshots'] ?? []) as $shot) {
@@ -818,6 +843,7 @@ function docs_marketing_values(array $ctx, array $data): array
  */
 function docs_render_marketing(array $ctx, string $iso, array $data, array $logo): string
 {
+    $ctx = docs_localize($ctx, $iso);
     $dir = $ctx['docs'] . "/marketing/$iso";
     @mkdir($dir, 0775, true);
     $values = docs_marketing_values($ctx, $data);

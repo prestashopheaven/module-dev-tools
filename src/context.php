@@ -687,6 +687,7 @@ function context_section_symfony(string $moduleDir): array
         $routes = [];
         $current = null;
         foreach (preg_split('/\R/', (string) file_get_contents($routesFile)) ?: [] as $line) {
+            $line = rtrim((string) preg_replace('/\s+#.*$/', '', $line)); // YAML comments
             if (preg_match('/^([A-Za-z0-9_.-]+):\s*$/', $line, $m)) {
                 $current = $m[1];
                 $routes[$current] = ['path' => '', 'methods' => '', 'controller' => ''];

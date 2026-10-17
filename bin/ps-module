@@ -112,6 +112,10 @@ switch ($command) {
                 $info = in_array($s['state'], ['ok', 'skipped'], true) ? $s['note'] : dod_command($step, $status['module']);
                 printf("  %-14s %-8s %s\n", $step, $s['state'], $info);
             }
+            if (dod_validator_key((string) $repoDir) === '') {
+                echo "  validator-api  off      no PRESTASHOP_VALIDATOR_API_KEY in the environment or a .env above the repo:\n"
+                    . "                          upload ../dist/<module>.zip to https://validator.prestashop.com by hand, or set the key\n";
+            }
             echo $status['complete'] ? "Complete.\n" : "Not complete.\n";
             // The context file is not part of the definition of done, but the Stop hook asks for it too.
             require_once $src . '/context.php';

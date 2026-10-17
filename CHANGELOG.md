@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.1] - 2026-10-17
+
+### Opgelost
+- Handleidingen en marketingbladen gebruiken per taal de vertaalde modulenaam (uit `i18n/<iso>.json`).
+- `ps-module status` meldt als de online validator niet geconfigureerd is (geen API-sleutel gevonden),
+  in plaats van stil "Complete" te geven.
+- `ps-module context`: YAML-comments in `routes.yml` komen niet meer in het overzicht.
+
 ## [1.5.0] - 2026-10-17
 
 ### Toegevoegd
