@@ -381,7 +381,8 @@ function checkFile(string $root, string $file, array $rules, Report $r): void
     }
 
     $isIndex = basename($file) === 'index.php';
-    if (in_array($ext, ['php', 'tpl', 'twig', 'js', 'css'], true) && !$isIndex && !str_starts_with($file, 'mails/')) {
+    // index.php files are checked too (the online validator does); mail templates get no header.
+    if (in_array($ext, ['php', 'tpl', 'twig', 'js', 'css'], true) && ($ext === 'php' || !str_starts_with($file, 'mails/'))) {
         checkLicense($content, $file, $rules, $r, $ext);
     }
 
@@ -410,6 +411,14 @@ function checkFile(string $root, string $file, array $rules, Report $r): void
  */
 function checkLicense(string $content, string $file, array $rules, Report $r, string $ext): void
 {
+    // The online validator wants the file comment as a "/**" docblock right after <?php
+    // (it reported "/*" headers 246 times on a real module).
+    if ($ext === 'php' && preg_match('#^<\?php\s*/\*(?!\*)#', $content)) {
+        $r->error('license', 'The file comment must be a "/**" docblock, not "/*".', $file);
+    } elseif ($ext === 'php' && !preg_match('#^<\?php\s*/\*\*#', $content)) {
+        $r->error('license', 'Missing file doc comment ("/**" license header right after <?php).', $file);
+    }
+
     $head = implode("\n", array_slice(preg_split('/\R/', $content) ?: [], 0, 40));
     if (!preg_match($rules['Licenses']['Copyright regex'] . 'm', $head)) {
         $level = in_array($ext, ['php', 'tpl'], true) ? 'error' : 'warning';

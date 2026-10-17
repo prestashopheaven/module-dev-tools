@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.0] - 2026-10-17
+
+### Toegevoegd
+- `ps-module validate`: het bestandscommentaar van elk PHP-bestand moet een `/**`-docblock zijn
+  (de online validator keurde `/*` 246 keer af in een echte module).
+
+### Gewijzigd
+- `index.php`-bestanden krijgen ook de licentiecontrole, net als bij de online validator.
+
 ## [1.1.0] - 2026-10-17
 
 ### Toegevoegd
