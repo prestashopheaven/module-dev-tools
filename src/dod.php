@@ -77,7 +77,12 @@ function dod_source_files(string $repoDir): array
             )
         );
         foreach ($it as $file) {
-            $files[] = str_replace('\\', '/', $file->getPathname());
+            $path = str_replace('\\', '/', $file->getPathname());
+            // Generated when the shop tests install Behat; not part of the code under test.
+            if (str_ends_with($path, '/tests/behat/composer.lock')) {
+                continue;
+            }
+            $files[] = $path;
         }
     }
     foreach (['testing.json'] as $extra) {
