@@ -32,6 +32,8 @@
  *   ps-module translations <command> extract | status | todo | apply | fill | auto | accept | prune | mails-ok | build | check
  *   ps-module docs <command>         init | status | check | screenshots | manual | marketing | build | mark-translated | preview | doctor:
  *                                    manuals (HTML + PDF), Addons marketing texts and screenshots in docs/
+ *   ps-module git <command>          status [--remote] | start <name> [--fix] | pr | finish | later:
+ *                                    feature branches, commit, push, pull/merge request, merge, clean up (GIT-01..07)
  *   ps-module context [--no-notes|--generate|--status]
  *                                    <repo>/CONTEXT.md: regenerate the overview and record that the Notes match the code
  *   ps-module index                  add the module's index.php to every directory that lacks one (not vendor/, never via symlinks)
@@ -84,6 +86,10 @@ switch ($command) {
     case 'shops':
         requireModule($moduleDir);
         exit(script('ps-test.php', $args, (string) $repoDir));
+
+    case 'git':
+        requireModule($moduleDir);
+        exit(script('gitflow.php', array_merge([(string) $moduleDir], $args), (string) $repoDir));
 
     case 'context':
         requireModule($moduleDir);

@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.6.0] - 2026-10-17
+
+### Toegevoegd
+- `ps-module git`: `status [--remote]`, `start <naam> [--fix]` (branch vanaf de bijgewerkte default
+  branch, neemt wijzigingen mee), `pr` (push + pull request via `gh`, of merge request op GitLab via
+  push-opties), `finish` (terug naar de default branch, pullen, branch alleen verwijderen als hij echt
+  gemerged is, ook na squash), `later`.
+- `gitflow_state()` / `gitflow_advice()` / `gitflow_signature()` voor de hooks van het project: welke vraag
+  (branch, commit, push + PR, merge, opruimen) aan de beurt is, één keer per stand van de repo.
+
 ## [1.5.1] - 2026-10-17
 
 ### Opgelost
