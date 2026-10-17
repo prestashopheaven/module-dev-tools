@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.0] - 2026-10-17
+
+### Toegevoegd
+- `ps-module link` / `unlink`: tijdelijk de lokale `../../libraries/*` gebruiken in plaats van Packagist.
+- `ps-module verify` weigert zolang libraries gekoppeld zijn.
+
+### Gewijzigd
+- De testwinkels volgen gekoppelde (symlink/junction) mappen bij het kopiëren van de module.
+
 ## [1.2.0] - 2026-10-17
 
 ### Toegevoegd

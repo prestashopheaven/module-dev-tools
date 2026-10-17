@@ -865,7 +865,7 @@ function copyDir(string $source, string $target, array $exclude): void
     @mkdir($target, 0775, true);
     $it = new RecursiveIteratorIterator(
         new RecursiveCallbackFilterIterator(
-            new RecursiveDirectoryIterator($source, FilesystemIterator::SKIP_DOTS),
+            new RecursiveDirectoryIterator($source, FilesystemIterator::SKIP_DOTS | FilesystemIterator::FOLLOW_SYMLINKS),
             static fn (SplFileInfo $f): bool => !($f->isDir() && in_array($f->getFilename(), $exclude, true))
         ),
         RecursiveIteratorIterator::SELF_FIRST

@@ -29,6 +29,7 @@
  *   ps-module shops <command> ...    PrestaShop test shops in Docker: doctor, run, up, down, integration, behat, upgrade
  *   ps-module status [--json]        which definition-of-done steps passed on the current code
  *   ps-module skip <step> "<reason>" mark a step that cannot run (reported to the user)
+ *   ps-module link | unlink          use the local ../../libraries/* (symlinked) instead of Packagist, and back
  */
 
 declare(strict_types=1);
@@ -104,6 +105,35 @@ switch ($command) {
         echo "ps-module: '$step' marked as skipped ($reason). Tell the user.\n";
         exit(0);
 
+    case 'link':
+        // Local library development: use ../../libraries/* (symlinked) instead of Packagist.
+        requireModule($moduleDir);
+        $composerFile = $moduleDir . '/composer.json';
+        $composer = json_decode((string) file_get_contents($composerFile), true);
+        $composer['repositories'] = array_values(array_filter(
+            $composer['repositories'] ?? [],
+            static fn (array $r): bool => ($r['url'] ?? '') !== '../../libraries/*'
+        ));
+        array_unshift($composer['repositories'], ['type' => 'path', 'url' => '../../libraries/*', 'options' => ['symlink' => true]]);
+        file_put_contents($composerFile, json_encode($composer, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
+        echo "ps-module: linked ../../libraries/*. Run 'ps-module unlink' before you commit (CI uses Packagist).\n";
+        exit(run('composer update "prestashopheaven/*" --no-interaction', $moduleDir));
+
+    case 'unlink':
+        requireModule($moduleDir);
+        $composerFile = $moduleDir . '/composer.json';
+        $composer = json_decode((string) file_get_contents($composerFile), true);
+        $composer['repositories'] = array_values(array_filter(
+            $composer['repositories'] ?? [],
+            static fn (array $r): bool => ($r['url'] ?? '') !== '../../libraries/*'
+        ));
+        if ($composer['repositories'] === []) {
+            unset($composer['repositories']);
+        }
+        file_put_contents($composerFile, json_encode($composer, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
+        echo "ps-module: back to the released packages from Packagist.\n";
+        exit(run('composer update "prestashopheaven/*" --no-interaction', $moduleDir));
+
     case 'fingerprint':
         requireRepo($repoDir);
         echo dod_fingerprint($repoDir) . "\n";
@@ -111,6 +141,12 @@ switch ($command) {
 
     case 'verify':
         requireModule($moduleDir);
+        $repos = json_decode((string) file_get_contents($moduleDir . '/composer.json'), true)['repositories'] ?? [];
+        if (in_array('../../libraries/*', array_column($repos, 'url'), true)) {
+            fwrite(STDERR, "ps-module verify: local libraries are linked. Run 'ps-module unlink' first: CI and releases use Packagist.
+");
+            exit(1);
+        }
         $steps = [
             'check' => ['self', ['check']],
             'validate-src' => ['self', ['validate']],
