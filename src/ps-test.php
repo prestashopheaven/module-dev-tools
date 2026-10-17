@@ -20,6 +20,7 @@
  *   ps-module shops run [<version>...]     full matrix (default: all versions in testing.json)
  *        options: --keep (leave the shops running), --skip-upgrade, --skip-behat, --skip-integration
  *   ps-module shops up <version>           start a shop, install the current module, print URLs
+ *   ps-module shops deploy <version>       put the current code in a running shop: uninstall, copy, install
  *   ps-module shops integration <version>  run the PHPUnit integration suite in a running shop
  *   ps-module shops behat <version>        run Behat against a running shop
  *   ps-module shops upgrade <version>      upgrade tests only (from the git tags in testing.json)
@@ -82,6 +83,18 @@ switch ($command) {
         out($result['ok'] ? 'Module installed.' : "Install FAILED:\n" . $result['output']);
         out("Shop:  http://localhost:{$shop->port}/");
         out("Admin: http://localhost:{$shop->port}/admin-dev/  (demo@prestashop.com / prestashop_demo)");
+        exit($result['ok'] ? 0 : 1);
+    case 'deploy':
+        requireDocker();
+        $shop = new Shop(requireVersion($args), $config);
+        if (!$shop->isReady()) {
+            fail("No running shop for PrestaShop {$shop->version}. Start one with: ps-module shops up {$shop->version}");
+        }
+        $shop->console('uninstall');
+        $shop->deploy($moduleDir);
+        $result = $shop->console('install');
+        out($result['ok'] ? "Deployed and installed on http://localhost:{$shop->port}/" : "Install FAILED:
+" . $result['output']);
         exit($result['ok'] ? 0 : 1);
     case 'integration':
         requireDocker();
@@ -206,7 +219,9 @@ final class Shop
     public function smoke(): array
     {
         $problems = [];
-        foreach (['/', '/index.php?controller=cart', '/index.php?id_category=2&controller=category'] as $path) {
+        // Home, cart, a category (id 3 exists in the demo data) and the search page. Note: in dev
+        // mode "index.php?id_category=2&controller=category" is only a "page has moved" stub.
+        foreach (['/', '/index.php?controller=cart', '/index.php?id_category=3&controller=category', '/index.php?controller=search&s=a'] as $path) {
             [$status, $body] = httpGet("http://localhost:{$this->port}$path");
             if ($status !== 200) {
                 $problems[] = "$path returned HTTP $status";
