@@ -15,7 +15,9 @@
 /*
  * Runs INSIDE the PrestaShop container (copied there by ps-test.php).
  * Prints a JSON snapshot of everything the module left in the shop:
- * module row, hooks, configuration keys, tabs and its own tables (schema).
+ * module row, hooks, configuration keys, tabs and its own tables (schema), and per shop:
+ * module_shops (shops where the module is enabled), hook_shops (hook => shops) and
+ * configuration_scopes (key => 'global', 'g<id_shop_group>' or 's<id_shop>' rows).
  *
  * Usage: php ps-probe.php <module_name> <CONFIG_PREFIX>
  */
@@ -46,6 +48,30 @@ $config = array_column($db->executeS(
     'SELECT DISTINCT name FROM `' . _DB_PREFIX_ . 'configuration`
      WHERE name LIKE \'' . pSQL(str_replace('_', '\_', $prefix)) . '\\\\_%\' ORDER BY name'
 ) ?: [], 'name');
+
+// Multistore: in which shops the module and its hooks are enabled, and at which level
+// (global, shop group, shop) each configuration key has a value.
+$moduleShops = $idModule ? array_map('intval', array_column($db->executeS(
+    'SELECT id_shop FROM `' . _DB_PREFIX_ . 'module_shop` WHERE id_module = ' . $idModule . ' ORDER BY id_shop'
+) ?: [], 'id_shop')) : [];
+
+$hookShops = [];
+foreach ($idModule ? $db->executeS(
+    'SELECT DISTINCT h.name, hm.id_shop FROM `' . _DB_PREFIX_ . 'hook_module` hm
+     JOIN `' . _DB_PREFIX_ . 'hook` h ON h.id_hook = hm.id_hook
+     WHERE hm.id_module = ' . $idModule . ' ORDER BY h.name, hm.id_shop'
+) ?: [] : [] as $row) {
+    $hookShops[$row['name']][] = (int) $row['id_shop'];
+}
+
+$configurationScopes = [];
+foreach ($db->executeS(
+    'SELECT DISTINCT name, id_shop_group, id_shop FROM `' . _DB_PREFIX_ . 'configuration`
+     WHERE name LIKE \'' . pSQL(str_replace('_', '\_', $prefix)) . '\\\\_%\' ORDER BY name, id_shop_group, id_shop'
+) ?: [] as $row) {
+    $configurationScopes[$row['name']][] = $row['id_shop'] !== null ? 's' . (int) $row['id_shop']
+        : ($row['id_shop_group'] !== null ? 'g' . (int) $row['id_shop_group'] : 'global');
+}
 
 $tabs = array_column($db->executeS(
     'SELECT class_name FROM `' . _DB_PREFIX_ . 'tab` WHERE module = \'' . pSQL($name) . '\' ORDER BY class_name'
@@ -96,5 +122,8 @@ echo json_encode([
     'tabs' => $tabs,
     'overrides' => $overrides,
     'configurable' => $configurable,
+    'module_shops' => $moduleShops,
+    'hook_shops' => $hookShops,
+    'configuration_scopes' => $configurationScopes,
     'tables' => $tables,
 ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);

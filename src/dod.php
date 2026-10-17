@@ -85,10 +85,14 @@ function dod_source_files(string $repoDir): array
             $files[] = $path;
         }
     }
-    foreach (['testing.json'] as $extra) {
+    foreach (['testing.json', 'i18n.json'] as $extra) {
         if (is_file("$repoDir/$extra")) {
             $files[] = "$repoDir/$extra";
         }
+    }
+    // Translation catalogues: an edited translation must invalidate the stamps.
+    foreach (glob("$repoDir/i18n/*.json") ?: [] as $catalogue) {
+        $files[] = str_replace('\\', '/', $catalogue);
     }
     sort($files);
 
@@ -111,6 +115,26 @@ function dod_fingerprint(string $repoDir): string
     return hash_final($hash);
 }
 
+/**
+ * Hash of the docs sources written by hand (docs/docs.json and docs/content/): the docs stamp is
+ * only valid for this content, so an edited manual or marketing text needs a new docs build.
+ */
+function dod_docs_hash(string $repoDir): string
+{
+    $docs = dod_norm($repoDir) . '/docs';
+    $files = array_merge([$docs . '/docs.json'], glob($docs . '/content/*.*') ?: [], glob($docs . '/content/*/*') ?: []);
+    $files = array_map(static fn (string $f): string => str_replace('\\', '/', $f), $files);
+    sort($files);
+    $hash = hash_init('sha256');
+    foreach ($files as $file) {
+        if (is_file($file)) {
+            hash_update($hash, substr($file, strlen($docs)) . "\0" . str_replace("\r\n", "\n", (string) file_get_contents($file)) . "\0");
+        }
+    }
+
+    return hash_final($hash);
+}
+
 /** Newest modification time of the source files (0 when there are none). */
 function dod_last_change(string $repoDir): int
 {
@@ -123,7 +147,8 @@ function dod_last_change(string $repoDir): int
 }
 
 /**
- * Steps the definition of done needs for this repository: shop tests only with testing.json, the online validator only with an API key.
+ * Steps the definition of done needs for this repository: shop tests only with testing.json, docs only with docs/docs.json,
+ * the online validator only with an API key.
  *
  * @return string[]
  */
@@ -132,6 +157,9 @@ function dod_required_steps(string $repoDir): array
     $steps = ['check', 'validate-src', 'validate-zip'];
     if (is_file("$repoDir/testing.json")) {
         $steps[] = 'shop-tests';
+    }
+    if (is_file("$repoDir/docs/docs.json")) {
+        $steps[] = 'docs';
     }
     if (dod_validator_key($repoDir) !== '') {
         $steps[] = 'validator-api';
@@ -211,6 +239,8 @@ function dod_status(string $repoDir): array
             $state = 'missing';
         } elseif (($data['fingerprint'] ?? '') !== $fingerprint) {
             $state = 'stale';
+        } elseif ($step === 'docs' && isset($data['content']) && $data['content'] !== dod_docs_hash($repoDir)) {
+            $state = 'stale'; // manual or marketing text edited after the last docs build
         } else {
             $state = $data['status'] === 'skipped' ? 'skipped' : 'ok';
         }
@@ -237,6 +267,7 @@ function dod_command(string $step, string $module): string
         'validate-src' => 'vendor/bin/ps-module validate',
         'validate-zip' => 'vendor/bin/ps-module build && vendor/bin/ps-module validate-zip',
         'shop-tests' => 'vendor/bin/ps-module shops run',
+        'docs' => 'vendor/bin/ps-module docs build',
         'validator-api' => 'vendor/bin/ps-module validator-api',
     ][$step] ?? $step;
 

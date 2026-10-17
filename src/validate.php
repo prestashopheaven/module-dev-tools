@@ -236,6 +236,14 @@ function checkIdentity(string $dir, string $name, array $rules, Report $r): void
     if (preg_match('/\$this->tab\s*=\s*[\'"]([^\'"]+)[\'"]/', $code, $t) && !in_array($t[1], $identity['Tab values'], true)) {
         $r->error('identity', "Tab '{$t[1]}' is not accepted. Use one of: " . implode(', ', $identity['Tab values']), "$name.php");
     }
+    // Addons technical standards: the maximum is a literal version, never _PS_VERSION_ (MOD-02).
+    if (preg_match('/[\'"]max[\'"]\s*=>\s*_PS_VERSION_/', $code)) {
+        $r->error('compatibility', "ps_versions_compliancy 'max' must be a literal version such as '9.99.99', never _PS_VERSION_ (MOD-02).", "$name.php");
+    }
+    // PrestaShopHeaven modules are always fully multistore compatible (MS-01).
+    if (!preg_match('/\$this->multistoreCompatibility\s*=\s*self::MULTISTORE_COMPATIBILITY_YES\s*;/', $code)) {
+        $r->error('multistore', 'The constructor must set $this->multistoreCompatibility = self::MULTISTORE_COMPATIBILITY_YES; (MS-01).', "$name.php");
+    }
     // install() may come from a trait (ModuleBase in prestashopheaven/module-kit).
     if (!preg_match('/function\s+install\s*\(/', $code) && !moduleDefines($dir, 'install')) {
         $r->warning('identity', 'No install() method in the main class or its traits.', "$name.php");
@@ -260,6 +268,8 @@ function checkDistribution(string $dir, Report $r, bool $fromZip): void
     $spec = is_file($specFile) ? json_decode((string) file_get_contents($specFile), true) : null;
     if (is_array($spec) && ($spec['distribution'] ?? '') === 'addons' && is_dir("$dir/override")) {
         $r->error('addons', 'Overrides are not accepted for modules sold on PrestaShop Addons; use hooks or service decoration.', 'override/');
+    } elseif (is_array($spec) && ($spec['distribution'] ?? '') === 'own-clients' && is_dir("$dir/override")) {
+        $r->warning('compatibility', 'Overrides conflict with other modules that override the same method (CMP-11); use hooks or service decoration.', 'override/');
     }
 }
 
@@ -420,7 +430,10 @@ function checkLicense(string $content, string $file, array $rules, Report $r, st
     }
 
     $head = implode("\n", array_slice(preg_split('/\R/', $content) ?: [], 0, 40));
-    if (!preg_match($rules['Licenses']['Copyright regex'] . 'm', $head)) {
+    // header-stamp writes Twig headers as "{# # ... #}" lines; accept both styles there.
+    $licenseFound = preg_match($rules['Licenses']['Copyright regex'] . 'm', $head)
+        || ($ext === 'twig' && preg_match('/^\s*#.*(LICENSE|COPYRIGHT)/mi', $head));
+    if (!$licenseFound) {
         $level = in_array($ext, ['php', 'tpl'], true) ? 'error' : 'warning';
         $r->$level('license', 'Missing license header (a " * ...LICENSE..." line).', $file);
     }

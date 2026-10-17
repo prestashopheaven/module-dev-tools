@@ -18,7 +18,7 @@
  * Run inside the module directory (composer scripts do that automatically).
  *
  *   ps-module verify                 the full definition of done, in order, stops at the first failure:
- *                                    check, validate, build, validate-zip, shops run, validator-api
+ *                                    check, validate, docs build, build, validate-zip, shops run, validator-api
  *   ps-module check                  composer "checks" (lint, cs, phpstan, compat, conventions, tests) + stamp
  *   ps-module conventions            docblocks on everything + clean main class (DOC-01, MOD-01)
  *   ps-module phpstan [<ps-version>...]
@@ -26,9 +26,13 @@
  *   ps-module build                  ../dist/<module>.zip (no-dev vendor, scoped, index.php everywhere)
  *   ps-module validate-zip           validator pre-check of ../dist/<module>.zip
  *   ps-module validator-api          upload ../dist/<module>.zip to validator.prestashop.com (needs a key in .env)
- *   ps-module shops <command> ...    PrestaShop test shops in Docker: doctor, run, up, down, integration, behat, upgrade
+ *   ps-module shops <command> ...    PrestaShop test shops in Docker: doctor, run, up, down, integration, behat, upgrade, multistore
  *   ps-module status [--json]        which definition-of-done steps passed on the current code
  *   ps-module skip <step> "<reason>" mark a step that cannot run (reported to the user)
+ *   ps-module translations <command> extract | status | todo | apply | fill | auto | accept | prune | mails-ok | build | check
+ *   ps-module docs <command>         init | status | check | screenshots | manual | marketing | build | mark-translated | preview | doctor:
+ *                                    manuals (HTML + PDF), Addons marketing texts and screenshots in docs/
+ *   ps-module index                  add the module's index.php to every directory that lacks one (not vendor/, never via symlinks)
  *   ps-module link | unlink          use the local ../../libraries/* (symlinked) instead of Packagist, and back
  */
 
@@ -78,6 +82,18 @@ switch ($command) {
     case 'shops':
         requireModule($moduleDir);
         exit(script('ps-test.php', $args, (string) $repoDir));
+
+    case 'index':
+        requireModule($moduleDir);
+        exit(addIndexFiles((string) $moduleDir));
+
+    case 'translations':
+        requireModule($moduleDir);
+        exit(script('translations.php', array_merge([(string) $moduleDir], $args), (string) $repoDir));
+
+    case 'docs':
+        requireModule($moduleDir);
+        exit(script('docs.php', array_merge([(string) $moduleDir], $args), (string) $repoDir));
 
     case 'status':
         requireRepo($repoDir);
@@ -147,13 +163,17 @@ switch ($command) {
 ");
             exit(1);
         }
+        $required = dod_required_steps((string) $repoDir);
         $steps = [
             'check' => ['self', ['check']],
             'validate-src' => ['self', ['validate']],
-            'build' => ['self', ['build']],
-            'validate-zip' => ['self', ['validate-zip']],
         ];
-        $required = dod_required_steps((string) $repoDir);
+        // Docs before the build: the release zip ships the manuals (docs/readme_<iso>.pdf).
+        if (in_array('docs', $required, true)) {
+            $steps['docs'] = ['self', ['docs', 'build']];
+        }
+        $steps['build'] = ['self', ['build']];
+        $steps['validate-zip'] = ['self', ['validate-zip']];
         if (in_array('shop-tests', $required, true)) {
             $steps['shop-tests'] = ['self', ['shops', 'run']];
         }
@@ -214,6 +234,44 @@ function requireRepo(?string $repoDir): void
         fwrite(STDERR, "ps-module: no module repository found (module.spec.json).\n");
         exit(2);
     }
+}
+
+/**
+ * Copies the module's root index.php (with its license header, STR-03) into every directory that
+ * lacks one. Skips vendor/ (ps-module build handles it) and never follows symlinks or junctions,
+ * so linked libraries (ps-module link) are never touched.
+ */
+function addIndexFiles(string $moduleDir): int
+{
+    $template = $moduleDir . '/index.php';
+    if (!is_file($template)) {
+        fwrite(STDERR, "ps-module index: $template is missing; copy it from the skill template first.\n");
+
+        return 1;
+    }
+    $skip = ['vendor', '.cache', 'node_modules', '.git', '.idea', 'dist'];
+    $root = str_replace('\\', '/', (string) realpath($moduleDir)) . '/';
+    // A directory whose real path lies outside the module is a symlink or junction: skip it.
+    $inside = static fn (string $path): bool => str_starts_with(str_replace('\\', '/', (string) realpath($path)) . '/', $root);
+    $it = new RecursiveIteratorIterator(
+        new RecursiveCallbackFilterIterator(
+            new RecursiveDirectoryIterator($moduleDir, FilesystemIterator::SKIP_DOTS),
+            static fn (SplFileInfo $f): bool => $f->isDir() && !$f->isLink() && !in_array($f->getFilename(), $skip, true)
+                && $inside($f->getPathname())
+        ),
+        RecursiveIteratorIterator::SELF_FIRST
+    );
+    $added = 0;
+    foreach ($it as $dir) {
+        $target = $dir->getPathname() . '/index.php';
+        if (!is_file($target)) {
+            copy($template, $target);
+            ++$added;
+        }
+    }
+    echo "ps-module index: added $added index.php file(s).\n";
+
+    return 0;
 }
 
 /**

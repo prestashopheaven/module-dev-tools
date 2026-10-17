@@ -1,0 +1,151 @@
+{
+  "_comment": "Languages a module can be translated into (translations, manuals, marketing). 'locale' is the PrestaShop locale used for translations/<locale>/*.xlf. 'ps_iso' is PrestaShop's own ISO code (ps_lang.iso_code, also the mails/<iso>/ directory) when it differs from the key. 'rtl' marks right-to-left scripts. Checked against app/Resources/all_languages.json of PrestaShop 8.1.0 and 9.2.0.",
+  "default_enabled": [
+    "en",
+    "fr",
+    "es",
+    "it",
+    "pl",
+    "de",
+    "nl",
+    "pt",
+    "ru"
+  ],
+  "languages": {
+    "en": {
+      "name": "English",
+      "locale": "en-US"
+    },
+    "fr": {
+      "name": "French",
+      "locale": "fr-FR"
+    },
+    "es": {
+      "name": "Spanish",
+      "locale": "es-ES"
+    },
+    "it": {
+      "name": "Italian",
+      "locale": "it-IT"
+    },
+    "pl": {
+      "name": "Polish",
+      "locale": "pl-PL"
+    },
+    "de": {
+      "name": "German",
+      "locale": "de-DE"
+    },
+    "sl": {
+      "name": "Slovenian",
+      "locale": "sl-SI",
+      "ps_iso": "si"
+    },
+    "ar": {
+      "name": "Arabic",
+      "locale": "ar-SA",
+      "rtl": true
+    },
+    "bg": {
+      "name": "Bulgarian",
+      "locale": "bg-BG"
+    },
+    "cs": {
+      "name": "Czech",
+      "locale": "cs-CZ"
+    },
+    "da": {
+      "name": "Danish",
+      "locale": "da-DK"
+    },
+    "el": {
+      "name": "Greek",
+      "locale": "el-GR"
+    },
+    "et": {
+      "name": "Estonian",
+      "locale": "et-EE"
+    },
+    "fi": {
+      "name": "Finnish",
+      "locale": "fi-FI"
+    },
+    "hu": {
+      "name": "Hungarian",
+      "locale": "hu-HU"
+    },
+    "id": {
+      "name": "Indonesian",
+      "locale": "id-ID"
+    },
+    "ja": {
+      "name": "Japanese",
+      "locale": "ja-JP"
+    },
+    "ko": {
+      "name": "Korean",
+      "locale": "ko-KR"
+    },
+    "lt": {
+      "name": "Lithuanian",
+      "locale": "lt-LT"
+    },
+    "lv": {
+      "name": "Latvian",
+      "locale": "lv-LV"
+    },
+    "no": {
+      "name": "Norwegian Bokmål",
+      "locale": "no-NO"
+    },
+    "nl": {
+      "name": "Dutch",
+      "locale": "nl-NL"
+    },
+    "pt": {
+      "name": "Portuguese",
+      "locale": "pt-PT"
+    },
+    "ro": {
+      "name": "Romanian",
+      "locale": "ro-RO"
+    },
+    "ru": {
+      "name": "Russian",
+      "locale": "ru-RU"
+    },
+    "sk": {
+      "name": "Slovak",
+      "locale": "sk-SK"
+    },
+    "sq": {
+      "name": "Albanian",
+      "locale": "sq-AL"
+    },
+    "sv": {
+      "name": "Swedish",
+      "locale": "sv-SE"
+    },
+    "th": {
+      "name": "Thai",
+      "locale": "th-TH"
+    },
+    "tr": {
+      "name": "Turkish",
+      "locale": "tr-TR"
+    },
+    "uk": {
+      "name": "Ukrainian",
+      "locale": "uk-UA"
+    },
+    "vi": {
+      "name": "Vietnamese",
+      "locale": "vi-VN",
+      "ps_iso": "vn"
+    },
+    "zh": {
+      "name": "Chinese",
+      "locale": "zh-CN"
+    }
+  }
+}

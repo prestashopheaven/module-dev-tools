@@ -1,0 +1,59 @@
+/* Style of the marketing sheets and docs/index.html (ps-module docs). Inlined into each page. */
+:root {
+    --accent: #1f4fd1;
+    --ink: #1d2433;
+    --muted: #5b6475;
+    --line: #dde2ea;
+    --bg: #f3f5f9;
+    --card: #ffffff;
+    --soft: #eef3ff;
+    --font: "Noto Sans", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, "Noto Sans Arabic", "Noto Sans Thai", "Noto Sans CJK SC", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+    :root { --ink: #e6e9ef; --muted: #a3acbd; --line: #2e3646; --bg: #131722; --card: #1b2130; --soft: #1f2a44; --accent: #7aa2ff; }
+}
+:lang(ja) { --font: "Noto Sans CJK JP", "Yu Gothic UI", "Yu Gothic", Meiryo, sans-serif; }
+:lang(zh) { --font: "Noto Sans CJK SC", "Microsoft YaHei", "PingFang SC", sans-serif; }
+:lang(ko) { --font: "Noto Sans CJK KR", "Malgun Gothic", sans-serif; }
+:lang(ar) { --font: "Noto Sans Arabic", "Segoe UI", Tahoma, sans-serif; }
+:lang(th) { --font: "Noto Sans Thai", "Leelawadee UI", Tahoma, sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 15px; line-height: 1.6; }
+.top { display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; align-items: flex-end; max-width: 980px; margin: 0 auto; padding: 36px 16px 20px; }
+.eyebrow { margin: 0; text-transform: uppercase; letter-spacing: .08em; font-size: 12px; color: var(--accent); font-weight: 700; }
+h1 { margin: 4px 0; font-size: 30px; line-height: 1.2; }
+h1 span { font-size: 16px; color: var(--muted); font-weight: 600; margin-inline-start: 6px; }
+.sub { margin: 0; color: var(--muted); font-size: 13px; }
+code { font-size: .9em; background: var(--soft); padding: 1px 5px; border-radius: 4px; }
+.langs { display: flex; flex-wrap: wrap; gap: 6px; }
+.langs a { text-decoration: none; color: var(--ink); border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 3px 11px; font-size: 13px; text-transform: uppercase; }
+.langs a[aria-current] { background: var(--accent); border-color: var(--accent); color: #fff; }
+main { max-width: 980px; margin: 0 auto; padding: 0 16px 48px; display: grid; gap: 14px; }
+.field { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; min-width: 0; }
+.field.internal { border-style: dashed; }
+.field.warn { border-color: #e3b341; }
+.field > header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.field h2 { font-size: 16px; margin: 0; flex: 1; }
+.num { flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--soft); color: var(--accent); font-weight: 700; display: grid; place-items: center; font-size: 13px; }
+.tag { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; white-space: nowrap; }
+.copy { font: inherit; font-size: 13px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 8px; padding: 4px 12px; cursor: pointer; }
+.copy:hover { border-color: var(--accent); color: var(--accent); }
+.value p { margin: 0 0 10px; }
+.value p:last-child { margin-bottom: 0; }
+.value ul, .value ol { margin: 0; padding-inline-start: 22px; }
+.value li { margin: 3px 0; }
+.value .big { font-size: 26px; font-weight: 700; }
+.value .none { color: var(--muted); font-style: italic; }
+.field > footer { margin-top: 10px; font-size: 12px; color: var(--muted); text-align: end; }
+figure.logo { float: inline-end; margin: 0 0 10px 16px; }
+figure.logo img { width: 120px; height: 120px; border-radius: 20px; border: 1px solid var(--line); background: #fff; }
+table.overview { width: 100%; border-collapse: collapse; font-size: 14px; }
+table.overview th, table.overview td { text-align: start; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+table.overview th small, table.overview td small { color: var(--muted); font-weight: 400; }
+.overview a { color: var(--accent); }
+.bad { color: #cf222e; }
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+.gallery figure { margin: 0; }
+.gallery img { width: 100%; height: 160px; object-fit: contain; object-position: top; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; display: block; }
+.gallery figcaption { font-size: 12px; color: var(--muted); margin-top: 4px; }
+@media (max-width: 600px) { h1 { font-size: 24px; } .field { padding: 14px; } figure.logo { float: none; margin: 0 0 10px; } }

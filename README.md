@@ -13,7 +13,10 @@ Ontwikkeltools voor PrestaShopHeaven-modules. Installeer als `require-dev`; alle
 | `ps-module build` | `../dist/<module>.zip`: no-dev vendor, gescopete packages, `index.php` overal |
 | `ps-module validate-zip` | Validator-precheck van de release-zip |
 | `ps-module validator-api` | Zip naar validator.prestashop.com (`PRESTASHOP_VALIDATOR_API_KEY` in `.env`) |
-| `ps-module shops <cmd>` | Testwinkels in Docker: `doctor`, `run`, `up`, `down`, `integration`, `behat`, `upgrade` |
+| `ps-module shops <cmd>` | Testwinkels in Docker: `doctor`, `run`, `up`, `down`, `integration`, `behat`, `upgrade`, `multistore` |
+| `ps-module translations <cmd>` | Teksten van de module in elke taal uit `<repo>/i18n.json`: `extract`, `status`, `todo`, `apply`, `fill`, `auto` (DeepL), `accept`, `prune`, `mails-ok`, `build` (XLF), `check` |
+| `ps-module index` | `index.php` van de module in elke map zonder (niet in `vendor/`, volgt geen symlinks) |
+| `ps-module docs <cmd>` | Handleidingen (HTML + PDF), marketingteksten (Addons) en screenshots per taal in `<repo>/docs/`: `init`, `status`, `check`, `screenshots`, `manual`, `marketing`, `build`, `mark-translated`, `preview`, `doctor` |
 | `ps-module status` | Welke stappen op de huidige code geslaagd zijn |
 | `ps-module skip <stap> "<reden>"` | Stap die echt niet kan draaien (wordt gemeld) |
 
@@ -37,6 +40,38 @@ definition of done af te dwingen. Een stempel met de hand zetten kan bewust niet
 en zet die prefix voor de genoemde namespaces, in de module-code en in `vendor/`. Daarna draait
 `composer dump-autoload`. Zo laadt elke module zijn eigen versie van gedeelde packages.
 `ps-module shops run` installeert ook de echte zip in de testwinkels.
+
+## Vertalingen (`ps-module translations`)
+
+- Talen: `<repo>/i18n.json` (`source: en` + `languages`); alle 33 beschikbare talen en hun
+  PrestaShop-locale staan in `resources/languages.json`.
+- Catalogus per taal: `<repo>/i18n/<iso>.json` (domein → Engelse tekst → vertaling; een vertaling
+  als `{text, machine}` is nog niet nagekeken). Alleen de catalogus bewerken.
+- `build` maakt de XLF-bestanden die PrestaShop 8 en 9 laden:
+  `<module>/translations/<locale>/<DomeinZonderPunten>.<locale>.xlf`.
+- `check` (in `composer checks`) faalt bij ontbrekende vertalingen, afwijkende placeholders,
+  niet-letterlijke teksten, ontbrekende mailvertalingen of verouderde XLF.
+- Generieke teksten met vertalingen in alle talen: `resources/translations/glossary.json` (`fill`).
+- `auto` vult aan via DeepL als `DEEPL_API_KEY` in de omgeving of een `.env` staat; anders vertaalt
+  Claude via `todo` + `apply`.
+
+## Documentatie en marketing (`ps-module docs`)
+
+Bron (geschreven door Claude, per taal uit `i18n.json`): `docs/content/<iso>/manual.md` (Markdown met
+front matter) en `docs/content/<iso>/marketing.json` (de velden van het Addons-productblad), plus
+`docs/docs.json` (screenshots, categorie, prijs, voordelen, multistore). `ps-module docs build`
+controleert alles (TODO's, lengtes, categorie/voordelen uit `resources/addons/`, versie gelijk aan de
+module, vertalingen bijgewerkt na een wijziging in het Engels), maakt screenshots in de Docker-testwinkel
+als de code veranderd is, en genereert `docs/manual/<iso>/manual.html` + PDF, `docs/marketing/<iso>/`
+en `docs/index.html`. Daarna staat de stap `docs` in de definition of done.
+
+- Screenshots en PDF draaien in de image `prestashopheaven/docs-tools:<hash>` (Playwright/Chromium met
+  Noto-fonts voor alle schriften), die bij het eerste gebruik lokaal gebouwd wordt uit
+  `resources/docs/Dockerfile`.
+- PDF-keten: Docker → lokale Chrome/Edge (headless) → wkhtmltopdf → dompdf (optioneel, alleen
+  Latijn/Cyrillisch/Grieks). Lukt niets, dan blijft de printklare HTML staan en meldt `build` dat.
+- `ps-module docs status` toont per taal precies welk bestand of veld ontbreekt of verouderd is;
+  `ps-module docs preview <iso>` zet PDF-pagina's om naar PNG om het resultaat te bekijken.
 
 ## Gedeelde configuratie
 

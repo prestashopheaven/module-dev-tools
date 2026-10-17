@@ -18,8 +18,10 @@
  *
  *   ps-module shops doctor                 check Docker
  *   ps-module shops run [<version>...]     full matrix (default: all versions in testing.json)
- *        options: --keep (leave the shops running), --skip-upgrade, --skip-behat, --skip-integration
+ *        options: --keep (leave the shops running), --skip-upgrade, --skip-behat, --skip-integration,
+ *                 --multistore / --skip-multistore (default: "multistore" in testing.json)
  *   ps-module shops up <version>           start a shop, install the current module, print URLs
+ *   ps-module shops multistore <version>   multistore round only (turns the shop into 3 shops; ps-multistore.php)
  *   ps-module shops deploy <version>       put the current code in a running shop: uninstall, copy, install
  *   ps-module shops integration <version>  run the PHPUnit integration suite in a running shop
  *   ps-module shops behat <version>        run Behat against a running shop
@@ -32,10 +34,12 @@
  *   3. PHPUnit integration suite             7. install the real release zip (scoped vendor/)
  *   4. Behat scenarios                       8. upgrade from earlier releases (git tags) and
  *                                               compare with a fresh install
+ *                                            9. multistore round (testing.json "multistore": true)
  */
 
 require_once __DIR__ . '/dod.php';
 require_once __DIR__ . '/composer-paths.php';
+require_once __DIR__ . '/ps-multistore.php';
 
 $repoRoot = dod_repo_dir((string) getcwd());
 if ($repoRoot === null) {
@@ -68,7 +72,7 @@ switch ($command) {
         $code = runMatrix($args ?: $config['versions'], $flags);
         // Definition-of-done stamp: only for a full run (all versions, nothing skipped) that passed.
         $full = array_diff($config['versions'], $args ?: $config['versions']) === []
-            && array_intersect($flags, ['--skip-upgrade', '--skip-behat', '--skip-integration']) === [];
+            && array_intersect($flags, ['--skip-upgrade', '--skip-behat', '--skip-integration', '--skip-multistore']) === [];
         if ($code === 0 && $full) {
             dod_stamp(ROOT, 'shop-tests', null, 'PrestaShop ' . implode(', ', $args ?: $config['versions']));
         }
@@ -109,6 +113,13 @@ switch ($command) {
         $shop = new Shop(requireVersion($args), $config);
         $shop->up();
         $results = upgradeTests($shop, freshSnapshot($shop));
+        printResults($results);
+        exit(allOk($results) ? 0 : 1);
+    case 'multistore':
+        requireDocker();
+        $shop = new Shop(requireVersion($args), $config);
+        $shop->up();
+        $results = multistoreRound($shop, $flags);
         printResults($results);
         exit(allOk($results) ? 0 : 1);
     case 'down':
@@ -375,6 +386,14 @@ final class Shop
     }
 
     /**
+     * Copies a local file into the PrestaShop container (e.g. a script for ps-multistore.php).
+     */
+    public function upload(string $localFile, string $containerPath): void
+    {
+        $this->compose('cp ' . escapeshellarg($localFile) . ' ' . escapeshellarg('prestashop:' . $containerPath));
+    }
+
+    /**
      * Runs a shell command inside the PrestaShop container and returns exit code and output.
      *
      * @return array{code: int, output: string}
@@ -458,6 +477,9 @@ function runMatrix(array $versions, array $flags): int
 
         if (($config['upgrade_from'] ?? 'none') !== 'none' && !in_array('--skip-upgrade', $flags, true)) {
             $results += upgradeTests($shop, $fresh);
+        }
+        if (multistoreWanted($config, $flags)) {
+            $results += multistoreRound($shop, $flags);
         }
 
         if (!in_array('--keep', $flags, true)) {
@@ -872,7 +894,15 @@ function copyDir(string $source, string $target, array $exclude): void
     );
     foreach ($it as $item) {
         $dest = $target . '/' . substr(str_replace('\\', '/', $item->getPathname()), strlen($source) + 1);
-        $item->isDir() ? @mkdir($dest, 0775, true) : copy($item->getPathname(), $dest);
+        if (is_dir($item->getPathname())) {
+            @mkdir($dest, 0775, true);
+            // On Windows the iterator does not descend into junctions (ps-module link): copy them by their real path.
+            if (!$it->callHasChildren()) {
+                copyDir((string) realpath($item->getPathname()), $dest, $exclude);
+            }
+        } else {
+            copy($item->getPathname(), $dest);
+        }
     }
 }
 

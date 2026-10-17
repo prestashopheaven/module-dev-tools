@@ -1,0 +1,118 @@
+{
+  "_comment": "Fields of the Addons product sheet, in the order of the Addons seller form. 'question' is the label in the form. 'scope': 'language' = docs/content/<iso>/marketing.json, 'common' = docs/docs.json > marketing (the same for every language). Addons does not publish length limits for these fields; the limits below are our own (long enough for a good text, short enough to stay readable). Lengths are counted in characters (mb_strlen) of the plain text.",
+  "fields": {
+    "description": {
+      "question": "Description of the module",
+      "scope": "language",
+      "type": "text",
+      "min": 300,
+      "max": 4000,
+      "hint": "What the module does and why a merchant wants it: 2-5 short paragraphs, written for merchants, no technical jargon."
+    },
+    "category": {
+      "question": "Category",
+      "scope": "common",
+      "type": "choice",
+      "options": "addons/categories.json",
+      "hint": "The one best-fitting category from resources/addons/categories.json."
+    },
+    "logo_suggestion": {
+      "question": "Logo",
+      "scope": "language",
+      "type": "text",
+      "min": 60,
+      "max": 800,
+      "hint": "A concept for the logo (Addons: square PNG, 512 x 512 recommended): symbol, colours, style. Optionally draw it in docs/content/logo-suggestion.svg."
+    },
+    "price": {
+      "question": "Price (excl. tax, EUR)",
+      "scope": "common",
+      "type": "price",
+      "min": 49.99,
+      "max": 4999.99,
+      "hint": "A number between 49.99 and 4999.99, compared with similar modules on Addons."
+    },
+    "features": {
+      "question": "What features are included in your module?",
+      "scope": "language",
+      "type": "list",
+      "min_items": 4,
+      "max_items": 15,
+      "item_min": 15,
+      "item_max": 250,
+      "max": 3000,
+      "hint": "One feature per item, benefit first, with the words merchants search for (SEO)."
+    },
+    "benefits": {
+      "question": "What are the benefits for the merchant?",
+      "scope": "common",
+      "type": "benefits",
+      "options": "addons/benefits.json",
+      "min_items": 1,
+      "max_items": 3,
+      "hint": "1-3 items as \"Group › Benefit\" from resources/addons/benefits.json."
+    },
+    "multistore": {
+      "question": "Is your module multi-store compatible?",
+      "scope": "common",
+      "type": "multistore",
+      "options": "addons/multistore-options.json",
+      "hint": "Always \"Fully\": PrestaShopHeaven modules must work in every shop of a multistore."
+    },
+    "installation_instructions": {
+      "question": "Detailed installation instructions",
+      "scope": "language",
+      "type": "text",
+      "min": 200,
+      "max": 5000,
+      "markdown": true,
+      "hint": "Step by step from download to a working configuration, including where to find the settings."
+    },
+    "installation_steps": {
+      "question": "Main installation steps",
+      "scope": "language",
+      "type": "list",
+      "min_items": 2,
+      "max_items": 8,
+      "item_min": 5,
+      "item_max": 200,
+      "hint": "The short version: 2-8 steps."
+    },
+    "prerequisites": {
+      "question": "Prerequisites",
+      "scope": "language",
+      "type": "list",
+      "min_items": 0,
+      "max_items": 10,
+      "item_min": 5,
+      "item_max": 300,
+      "warn_if_not_empty": true,
+      "hint": "Ideally none (empty list). Only real requirements: an external account, an API key, a PHP extension."
+    },
+    "anything_to_add": {
+      "question": "Anything to add?",
+      "scope": "language",
+      "type": "text",
+      "min": 20,
+      "max": 2000,
+      "hint": "Known incompatibilities, conflicts with other modules or themes, limitations, support. Write \"No known incompatibilities.\" when there are none."
+    },
+    "keywords": {
+      "question": "SEO keywords (not an Addons field: used to check the description and the features)",
+      "scope": "language",
+      "type": "list",
+      "min_items": 3,
+      "max_items": 10,
+      "item_min": 2,
+      "item_max": 60,
+      "internal": true,
+      "hint": "The search terms merchants use in this language. Each one should occur in the description or the features."
+    }
+  },
+  "screenshots": {
+    "_comment": "Screenshots for the Addons product page, per language. Not confirmed by published Addons documentation (research: at least 3, at least 1000 x 1000 px, front office on Classic and Hummingbird and mobile): reported as a warning by 'docs build'.",
+    "min_count": 3,
+    "min_width": 1000,
+    "min_height": 1000
+  }
+}

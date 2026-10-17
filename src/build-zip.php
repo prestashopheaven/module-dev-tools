@@ -12,7 +12,8 @@
  *     extra.prestashopheaven.scope is prefixed with extra.prestashopheaven.scope-prefix,
  *     in the module code and in vendor/. Two modules with different versions of the same
  *     package can then run side by side in one shop.
- *  4. add index.php to every directory (also vendor/), zip with <module>/ as root
+ *  4. add the manuals (<repo>/docs/manual/<iso>/readme_<iso>.pdf) as docs/readme_<iso>.pdf
+ *  5. add index.php to every directory (also vendor/), zip with <module>/ as root
  */
 
 declare(strict_types=1);
@@ -86,6 +87,12 @@ if (is_file("$stage/composer.json")) {
 // Same as PrestaShop's own release build: composer files are not shipped.
 @unlink("$stage/composer.json");
 @unlink("$stage/composer.lock");
+
+// Manuals for Addons (REL-06): docs/readme_<iso>.pdf, made by `ps-module docs build`.
+foreach (glob(dirname($moduleDir) . '/docs/manual/*/readme_*.pdf') ?: [] as $pdf) {
+    @mkdir("$stage/docs", 0775, true);
+    copy($pdf, "$stage/docs/" . basename($pdf));
+}
 
 addIndexFiles($stage, (string) file_get_contents("$moduleDir/index.php"));
 
@@ -161,12 +168,36 @@ function scopeNamespaces(string $stage, string $prefix, array $scopes): int
             $new = (string) preg_replace_callback($pattern, static fn (): string => $replacement, $new);
         }
         if ($new !== $content) {
+            if (str_ends_with($path, '.php') && !str_starts_with($relative, 'vendor/')) {
+                $new = sortImportBlocks($new);
+            }
             file_put_contents($path, $new);
             ++$changed;
         }
     }
 
     return $changed;
+}
+
+/**
+ * Sorts each block of consecutive class imports ("use A\B;") the way php-cs-fixer's
+ * ordered_imports does (case-insensitive, "\" as a space). Scoping changes the names, and the
+ * online validator reports unsorted imports in the module's own files.
+ */
+function sortImportBlocks(string $code): string
+{
+    return (string) preg_replace_callback(
+        '/^(?:use [A-Za-z0-9_\\\\]+(?: as [A-Za-z0-9_]+)?;\R)+/m',
+        static function (array $m): string {
+            $lines = preg_split('/\R/', rtrim($m[0])) ?: [];
+            $key = static fn (string $line): string => str_replace('\\', ' ', (string) preg_replace('/^use |;$/', '', $line));
+            usort($lines, static fn (string $a, string $b): int => strcasecmp($key($a), $key($b)));
+            $eol = str_contains($m[0], "\r\n") ? "\r\n" : "\n";
+
+            return implode($eol, $lines) . $eol;
+        },
+        $code
+    );
 }
 
 /**

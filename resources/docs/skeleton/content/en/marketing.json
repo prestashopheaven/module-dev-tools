@@ -1,0 +1,27 @@
+{
+    "_meta": {
+        "module": "{{MODULE_NAME}}",
+        "version": "{{VERSION}}",
+        "language": "en"
+    },
+    "description": "{{DESCRIPTION}} TODO: 2-5 short paragraphs for merchants: what the module does, why they want it, what makes it better than the alternatives (300-4000 characters).",
+    "logo_suggestion": "TODO: a concept for the square logo: symbol, colours, style (and optionally draw it in docs/content/logo-suggestion.svg).",
+    "features": [
+        "TODO: one feature per item, benefit first, with the words merchants search for",
+        "TODO: feature 2",
+        "TODO: feature 3",
+        "TODO: feature 4"
+    ],
+    "installation_instructions": "TODO: step by step from download to a working configuration. Markdown is allowed (lists, **bold**).",
+    "installation_steps": [
+        "Download {{MODULE_NAME}}.zip from your Addons account.",
+        "In the back office, go to Modules › Module Manager and click Upload a module.",
+        "Select the zip file: PrestaShop installs the module.",
+        "TODO: click Configure and set ..."
+    ],
+    "prerequisites": [],
+    "anything_to_add": "TODO: known incompatibilities, limitations, support. \"No known incompatibilities.\" when there are none.",
+    "keywords": [
+        "TODO: 3-10 search terms merchants use in this language"
+    ]
+}

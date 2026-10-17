@@ -1,0 +1,10 @@
+{
+  "_comment": "Addons field 'Is your module multi-store compatible?'. PrestaShopHeaven modules are always 'Fully'.",
+  "options": [
+    "Fully",
+    "Partially",
+    "Not at all",
+    "Not concerned"
+  ],
+  "required": "Fully"
+}
