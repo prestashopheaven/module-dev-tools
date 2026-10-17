@@ -133,7 +133,7 @@ switch ($command) {
         array_unshift($composer['repositories'], ['type' => 'path', 'url' => '../../libraries/*', 'options' => ['symlink' => true]]);
         file_put_contents($composerFile, json_encode($composer, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
         echo "ps-module: linked ../../libraries/*. Run 'ps-module unlink' before you commit (CI uses Packagist).\n";
-        exit(run('composer update "prestashopheaven/*" --no-interaction', $moduleDir));
+        exit(updateLibraries((string) $moduleDir));
 
     case 'unlink':
         requireModule($moduleDir);
@@ -148,7 +148,7 @@ switch ($command) {
         }
         file_put_contents($composerFile, json_encode($composer, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
         echo "ps-module: back to the released packages from Packagist.\n";
-        exit(run('composer update "prestashopheaven/*" --no-interaction', $moduleDir));
+        exit(updateLibraries((string) $moduleDir));
 
     case 'fingerprint':
         requireRepo($repoDir);
@@ -272,6 +272,24 @@ function addIndexFiles(string $moduleDir): int
     echo "ps-module index: added $added index.php file(s).\n";
 
     return 0;
+}
+
+/**
+ * Runs `composer update "prestashopheaven/*"` after link/unlink. On Windows Composer cannot replace
+ * the module-dev-tools package while this script runs from it ("Permission denied"), so there the
+ * command is printed for the user to run instead.
+ */
+function updateLibraries(string $moduleDir): int
+{
+    $command = 'composer update "prestashopheaven/*" --no-interaction';
+    if (PHP_OS_FAMILY === 'Windows') {
+        echo "ps-module: composer.json is updated. Now run in $moduleDir:\n  $command\n"
+            . "(On Windows Composer cannot replace module-dev-tools while ps-module itself is running.)\n";
+
+        return 0;
+    }
+
+    return run($command, $moduleDir);
 }
 
 /**

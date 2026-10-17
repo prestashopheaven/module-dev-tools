@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.4.1] - 2026-10-17
+
+### Opgelost
+- Multistore-ronde: configuratievelden met een getal (NumberType/MoneyType renderen `type="text"`)
+  krijgen numerieke testwaarden; veldfouten van het UI-kit-formulierthema worden gemeld.
+- Testwinkels: Windows-junctions (`ps-module link`) worden ook gekopieerd als `is_dir()` ze niet herkent.
+- `ps-module link`/`unlink` op Windows: geeft het `composer update`-commando om zelf te draaien, omdat
+  Composer module-dev-tools niet kan vervangen terwijl `ps-module` draait.
+
 ## [1.4.0] - 2026-10-17
 
 ### Toegevoegd

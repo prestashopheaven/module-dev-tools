@@ -29,8 +29,8 @@
  *                                                        unchanged (MS-03)
  *   php ps-multistore-shop.php delete-shop <module>      creates a temporary shop, gives it values and deletes it;
  *                                                        lists rows of the module that still point to it (MS-08)
- *   php ps-multistore-shop.php find-value <module> <v>   configuration rows of the module with value <v>, with
- *                                                        their scope ('global', 'g<id>', 's<id>')
+ *   php ps-multistore-shop.php find-value <module> <v>   configuration rows of the module with value <v> (a number
+ *                                                        also matches "72.00"), with their scope ('global', 'g<id>', 's<id>')
  *   php ps-multistore-shop.php enable|disable <module> <id_shop>
  *                                                        enables/disables the module in one shop, as Module
  *                                                        Manager does in that shop context ("bin/console
@@ -389,12 +389,27 @@ function msFindValue(string $module, string $value): array
     foreach (Db::getInstance()->executeS(
         'SELECT name, id_shop_group, id_shop FROM `' . _DB_PREFIX_ . 'configuration`'
         . ' WHERE name LIKE \'' . pSQL(str_replace('_', '\_', strtoupper($module))) . '\\\\_%\''
-        . ' AND value = \'' . pSQL($value) . '\' ORDER BY name'
+        . ' AND ' . msValueCondition($value) . ' ORDER BY name'
     ) ?: [] as $row) {
         $rows[] = ['name' => $row['name'], 'scope' => msScopeOf($row)];
     }
 
     return $rows;
+}
+
+/**
+ * SQL condition on ps_configuration.value: equal to $value, or for a number ("72") also the same
+ * number stored differently ("72.00", "72,0"), because modules normalise amounts before saving them.
+ */
+function msValueCondition(string $value): string
+{
+    $equal = 'value = \'' . pSQL($value) . '\'';
+    if (preg_match('/^-?\d+(?:\.\d+)?$/', $value) !== 1) {
+        return $equal;
+    }
+
+    return '(' . $equal . ' OR (value REGEXP \'^-?[0-9]+([.,][0-9]+)?$\''
+        . ' AND CAST(REPLACE(value, \',\', \'.\') AS DECIMAL(30,6)) = ' . (float) $value . '))';
 }
 
 /**

@@ -367,7 +367,9 @@ function msDisableInOneShop(Shop $shop, array $allShops, int $shop2): array
  *   - all shops: no multistore checkboxes; saving writes the global value
  *   - shop 2 (setShopContext=s-<id>) and group 2 (g-<id>): a checkbox per field; ticked + saved =
  *     own value for that shop/group only, untick + saved = own value removed again (inherits)
- * The first text field of the form is used; the expected rows are looked up by value.
+ * The first text field of the form is used; the expected rows are looked up by value. A field that
+ * holds a number (an amount, a limit: Symfony NumberType/MoneyType render as type="text") gets numeric
+ * markers, compared as numbers, so a field that only accepts numbers is tested too.
  *
  * @param int $shop2 id of "Shop 2"
  * @param int $group2 id of "Group 2"
@@ -399,10 +401,12 @@ function msBackOfficeForm(Shop $shop, int $shop2, int $group2): array
 
         return ['ok' => true, 'output' => 'no text field in the configuration form (nothing to test)'];
     }
+    $numeric = msIsNumber((string) ($page['fields'][$textField] ?? ''));
+    $allMarker = msFormMarker('all', $numeric);
     $fields = $page['fields'];
-    $fields[$textField] = 'ms-bo-all.';
+    $fields[$textField] = $allMarker;
     $save = msSubmit($jar, $page, $fields);
-    $rows = msRowsWithValue($shop, 'ms-bo-all.');
+    $rows = msRowsWithValue($shop, $allMarker);
     if ($save !== null) {
         $problems[] = "all shops context: saving failed: $save";
     } elseif (count($rows) !== 1 || $rows[0]['scope'] !== 'global') {
@@ -425,7 +429,7 @@ function msBackOfficeForm(Shop $shop, int $shop2, int $group2): array
             $problems[] = "$label context: no multistore checkbox $checkbox next to $textField (MS-05: getParent() = MultistoreConfigurationType, 'multistore_configuration_key' per field)";
             break;
         }
-        $marker = 'ms-bo-' . $scope . '.';
+        $marker = msFormMarker($scope[0] === 's' ? 'shop' : 'group', $numeric, $scope);
         $fields = $page['fields'];
         $fields[$checkbox] = $page['checkboxes'][$checkbox];
         $fields[$textField] = $marker;
@@ -438,7 +442,7 @@ function msBackOfficeForm(Shop $shop, int $shop2, int $group2): array
         if (count($rows) !== 1 || $rows[0]['scope'] !== $scope || $rows[0]['name'] !== $key) {
             $problems[] = "$label with checkbox: saving wrote " . json_encode($rows) . ", expected one row of $key for $label";
         }
-        if (msRowsWithValue($shop, 'ms-bo-all.') === []) {
+        if (msRowsWithValue($shop, $allMarker) === []) {
             $problems[] = "$label with checkbox: the global value was changed";
         }
 
@@ -448,7 +452,7 @@ function msBackOfficeForm(Shop $shop, int $shop2, int $group2): array
             $problems[] = $page;
             continue;
         }
-        if (!isset($page['fields'][$checkbox]) || ($page['fields'][$textField] ?? null) !== $marker) {
+        if (!isset($page['fields'][$checkbox]) || !msSameValue((string) ($page['fields'][$textField] ?? ''), $marker, $numeric)) {
             $problems[] = "$label: after saving, the page does not show the own value with a ticked checkbox";
         }
         // Untick: the browser no longer sends the checkbox, and the field is disabled again (MultistoreConfigField).
@@ -570,6 +574,43 @@ function msFormPage(string $jar, string $url, string $context): array|string
 }
 
 /**
+ * Whether a form value is a plain number ("50", "49.90", "49,90"): then the field gets numeric markers.
+ */
+function msIsNumber(string $value): bool
+{
+    return preg_match('/^\s*-?\d+(?:[.,]\d+)?\s*$/', $value) === 1;
+}
+
+/**
+ * The value the back-office test writes in a context: a text marker ("ms-bo-all.", "ms-bo-s2."), or
+ * for a numeric field a number that is unlikely to be a default (71 = all shops, 72 = shop, 73 = group).
+ *
+ * @param string $context 'all', 'shop' or 'group'
+ * @param string $scope scope label of the shop or group ('s2', 'g2') for the text marker
+ */
+function msFormMarker(string $context, bool $numeric, string $scope = 'all'): string
+{
+    if ($numeric) {
+        return ['all' => '71', 'shop' => '72', 'group' => '73'][$context];
+    }
+
+    return 'ms-bo-' . $scope . '.';
+}
+
+/**
+ * Whether the form shows the marker again: equal text, or for a numeric field the same number
+ * (the form may show 72 as "72.00" or "72,00").
+ */
+function msSameValue(string $shown, string $marker, bool $numeric): bool
+{
+    if (!$numeric) {
+        return $shown === $marker;
+    }
+
+    return msIsNumber($shown) && abs((float) str_replace(',', '.', trim($shown)) - (float) $marker) < 0.000001;
+}
+
+/**
  * The first text input of the form (the field used for the test), or null.
  *
  * @param array{text: string[]} $page
@@ -597,6 +638,13 @@ function msSubmit(string $jar, array $page, array $fields): ?string
     }
     if (preg_match('/class="[^"]*invalid-feedback[^"]*"[^>]*>(.*?)<\//is', $html, $m) && trim(strip_tags($m[1])) !== '') {
         return 'field error: ' . trim(strip_tags($m[1]));
+    }
+    // Field errors of the PrestaShop UI kit form theme (form_errors_field): <div class="... text-danger ..." role="alert">.
+    if (preg_match('/<div[^>]*class="[^"]*\btext-danger\b[^"]*"[^>]*role="alert"[^>]*>(.*?)<\/div>/is', $html, $m)) {
+        $error = trim((string) preg_replace('/\s+/', ' ', strip_tags((string) preg_replace('/<i\b[^>]*>.*?<\/i>/is', '', $m[1]))));
+        if ($error !== '') {
+            return 'field error: ' . $error;
+        }
     }
 
     return null;

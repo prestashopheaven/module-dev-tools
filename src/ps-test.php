@@ -894,7 +894,10 @@ function copyDir(string $source, string $target, array $exclude): void
     );
     foreach ($it as $item) {
         $dest = $target . '/' . substr(str_replace('\\', '/', $item->getPathname()), strlen($source) + 1);
-        if (is_dir($item->getPathname())) {
+        // Inside the iterator, is_dir() is false for a Windows junction (filetype "unknown", seen on
+        // PHP 8.5), so a linked library would be skipped: check its real path as well.
+        $real = realpath($item->getPathname());
+        if (is_dir($item->getPathname()) || ($real !== false && is_dir($real))) {
             @mkdir($dest, 0775, true);
             // On Windows the iterator does not descend into junctions (ps-module link): copy them by their real path.
             if (!$it->callHasChildren()) {
