@@ -69,26 +69,41 @@ exit($report->errorCount() > 0 ? 1 : 0);
 
 // ---------------------------------------------------------------------------
 
+/**
+ * Collects the findings of the pre-check and prints them as text or JSON.
+ */
 final class Report
 {
     /** @var array<int, array{level: string, rule: string, file: string, line: int, message: string}> */
     private array $items = [];
 
+    /**
+     * Adds a finding that the validator would reject.
+     */
     public function error(string $rule, string $message, string $file = '', int $line = 0): void
     {
         $this->items[] = ['level' => 'error', 'rule' => $rule, 'file' => $file, 'line' => $line, 'message' => $message];
     }
 
+    /**
+     * Adds a finding that is worth fixing but does not block a submission.
+     */
     public function warning(string $rule, string $message, string $file = '', int $line = 0): void
     {
         $this->items[] = ['level' => 'warning', 'rule' => $rule, 'file' => $file, 'line' => $line, 'message' => $message];
     }
 
+    /**
+     * Number of findings with level error.
+     */
     public function errorCount(): int
     {
         return count(array_filter($this->items, static fn (array $i): bool => $i['level'] === 'error'));
     }
 
+    /**
+     * Prints all findings, sorted, as text or as JSON.
+     */
     public function output(bool $json, string $rulesVersion, string $module): void
     {
         if ($json) {
@@ -107,7 +122,11 @@ final class Report
     }
 }
 
-/** @return array<string, mixed> */
+/**
+ * Loads the live rules from validator.prestashop.com (cached for a day), falling back to the bundled copy.
+ *
+ * @return array<string, mixed>
+ */
 function loadRules(): array
 {
     $bundled = dirname(__DIR__) . '/resources/validator-rules.json';
@@ -133,6 +152,9 @@ function loadRules(): array
     return $rules;
 }
 
+/**
+ * Extracts a release zip into a temporary directory and returns the module directory inside it.
+ */
 function extractZip(string $zipFile): string
 {
     $work = str_replace('\\', '/', sys_get_temp_dir()) . '/ps_validate_' . uniqid();
@@ -154,6 +176,8 @@ function extractZip(string $zipFile): string
 }
 
 /**
+ * All files below $root (relative paths), skipping the given directories.
+ *
  * @param string[] $skipDirs
  *
  * @return string[] paths relative to $root
@@ -174,7 +198,11 @@ function listFiles(string $root, array $skipDirs): array
     return $files;
 }
 
-/** @param array<string, mixed> $rules */
+/**
+ * Module identity: name, main class, required constructor properties, version, tab, config.xml.
+ *
+ * @param array<string, mixed> $rules
+ */
 function checkIdentity(string $dir, string $name, array $rules, Report $r): void
 {
     $identity = $rules['Module identity'];
@@ -252,6 +280,8 @@ function moduleDefines(string $dir, string $function): bool
 }
 
 /**
+ * Structure: .htaccess, logo, index.php in every directory, unneeded files, file locations.
+ *
  * @param array<string, mixed> $rules
  * @param string[] $skipDirs
  */
@@ -325,7 +355,11 @@ function checkStructure(string $dir, array $rules, Report $r, array $skipDirs, b
     }
 }
 
-/** @param array<string, mixed> $rules */
+/**
+ * Per-file checks: encoding, conflict markers, license header and the checks per file type.
+ *
+ * @param array<string, mixed> $rules
+ */
 function checkFile(string $root, string $file, array $rules, Report $r): void
 {
     $ext = strtolower(pathinfo($file, PATHINFO_EXTENSION));
@@ -369,7 +403,11 @@ function checkFile(string $root, string $file, array $rules, Report $r): void
     }
 }
 
-/** @param array<string, mixed> $rules */
+/**
+ * Checks the license header and the copyright years in the first lines of a file.
+ *
+ * @param array<string, mixed> $rules
+ */
 function checkLicense(string $content, string $file, array $rules, Report $r, string $ext): void
 {
     $head = implode("\n", array_slice(preg_split('/\R/', $content) ?: [], 0, 40));
@@ -379,11 +417,16 @@ function checkLicense(string $content, string $file, array $rules, Report $r, st
     }
     $yearRegex = str_replace('<year>', date('y'), $rules['Licenses']['Copyright year regex']);
     if (preg_match($yearRegex, $head)) {
-        $r->error('license', 'Copyright year range must end in the current year; prefer "Since YYYY".', $file);
+        // The live rules list this regex, but validator 5.14.4 did not report it (2026-10-17): warning.
+        $r->warning('license', 'Copyright year range does not end in the current year; prefer "Since YYYY".', $file);
     }
 }
 
-/** @param array<string, mixed> $rules */
+/**
+ * PHP checks on the token stream: _PS_VERSION_ guard, forbidden functions and variables, extension guards.
+ *
+ * @param array<string, mixed> $rules
+ */
 function checkPhp(string $code, string $file, array $rules, Report $r, bool $isIndex): void
 {
     try {
@@ -491,7 +534,11 @@ function checkPhp(string $code, string $file, array $rules, Report $r, bool $isI
     }
 }
 
-/** @param array<string, mixed> $rules */
+/**
+ * Smarty checks: escaped output and complete {l} tags.
+ *
+ * @param array<string, mixed> $rules
+ */
 function checkSmarty(string $tpl, string $file, array $rules, Report $r): void
 {
     $escapes = $rules['Smarty']['Expected escapes'];
@@ -537,6 +584,9 @@ function checkSmarty(string $tpl, string $file, array $rules, Report $r): void
     }
 }
 
+/**
+ * SQL checks: IF [NOT] EXISTS, no triggers, MariaDB-only syntax, hard-coded table prefix.
+ */
 function checkSql(string $sql, string $file, Report $r): void
 {
     if (preg_match('/\bTRIGGER\b/i', $sql)) {
@@ -556,6 +606,9 @@ function checkSql(string $sql, string $file, Report $r): void
     }
 }
 
+/**
+ * Deletes a directory with everything in it.
+ */
 function removeTree(string $dir): void
 {
     $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST);

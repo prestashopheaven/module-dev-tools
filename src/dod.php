@@ -95,6 +95,9 @@ function dod_source_files(string $repoDir): array
     return $files;
 }
 
+/**
+ * Hash of the module source (paths and contents, line endings normalised): a stamp is only valid for this exact code.
+ */
 function dod_fingerprint(string $repoDir): string
 {
     $repoDir = dod_norm($repoDir);
@@ -119,7 +122,11 @@ function dod_last_change(string $repoDir): int
     return $max;
 }
 
-/** @return string[] */
+/**
+ * Steps the definition of done needs for this repository: shop tests only with testing.json, the online validator only with an API key.
+ *
+ * @return string[]
+ */
 function dod_required_steps(string $repoDir): array
 {
     $steps = ['check', 'validate-src', 'validate-zip'];
@@ -133,6 +140,9 @@ function dod_required_steps(string $repoDir): array
     return $steps;
 }
 
+/**
+ * The validator API key from the environment or the nearest .env file upwards, or an empty string.
+ */
 function dod_validator_key(string $dir): string
 {
     if (getenv('PRESTASHOP_VALIDATOR_API_KEY')) {
@@ -164,6 +174,9 @@ function dod_stamp(string $repoDir, string $step, ?string $fingerprint = null, s
     ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
 }
 
+/**
+ * Records that a step cannot run here (e.g. no Docker), with the reason; the Stop hook reports it to the user.
+ */
 function dod_skip(string $repoDir, string $step, string $reason): void
 {
     $repoDir = dod_norm($repoDir);
@@ -181,6 +194,8 @@ function dod_skip(string $repoDir, string $step, string $reason): void
 }
 
 /**
+ * State of every required step for the current code: ok, stale (code changed since), missing or skipped.
+ *
  * @return array{repo: string, module: string, fingerprint: string, complete: bool, steps: array<string, array{state: string, note: string, time: string}>}
  */
 function dod_status(string $repoDir): array

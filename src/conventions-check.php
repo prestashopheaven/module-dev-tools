@@ -216,6 +216,8 @@ function hasDescription(string $doc): bool
 }
 
 /**
+ * Returns the index of the closing bracket of the attribute that starts at $i.
+ *
  * @param array<int, array{0: int, 1: string, 2: int}|string> $tokens
  */
 function skipAttribute(array $tokens, int $i): int
@@ -237,6 +239,8 @@ function skipAttribute(array $tokens, int $i): int
 }
 
 /**
+ * Returns the next token after $i that is not whitespace or a comment.
+ *
  * @param array<int, array{0: int, 1: string, 2: int}|string> $tokens
  *
  * @return array{0: int, 1: string, 2: int}|string|null
@@ -249,6 +253,8 @@ function nextSignificant(array $tokens, int $i): array|string|null
 }
 
 /**
+ * Returns the index of the next token after $i that is not whitespace or a comment.
+ *
  * @param array<int, array{0: int, 1: string, 2: int}|string> $tokens
  */
 function nextSignificantIndex(array $tokens, int $i): ?int
@@ -263,6 +269,8 @@ function nextSignificantIndex(array $tokens, int $i): ?int
 }
 
 /**
+ * Returns the previous token before $i that is not whitespace or a comment.
+ *
  * @param array<int, array{0: int, 1: string, 2: int}|string> $tokens
  *
  * @return array{0: int, 1: string, 2: int}|string|null

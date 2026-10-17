@@ -52,6 +52,16 @@ copyFiltered($moduleDir, $stage);
 
 if (is_file("$stage/composer.json")) {
     rewritePathRepositories($moduleDir, $stage);
+    if (!is_file("$stage/composer.lock")) {
+        // Without a lock file composer resolves require-dev too, even with --no-dev, and broken
+        // or unstable dev tools would block the build. They are never shipped: drop them here.
+        $composer = json_decode((string) file_get_contents("$stage/composer.json"), true);
+        unset($composer['require-dev'], $composer['autoload-dev']);
+        file_put_contents("$stage/composer.json", json_encode($composer, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "
+");
+        fwrite(STDERR, "No composer.lock: building without require-dev.
+");
+    }
     $cmd = 'composer install --no-dev --optimize-autoloader --no-interaction --no-progress --quiet --working-dir=' . escapeshellarg($stage);
     passthru($cmd, $code);
     if ($code !== 0) {

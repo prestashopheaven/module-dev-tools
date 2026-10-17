@@ -141,7 +141,11 @@ exit($errors > 0 ? 1 : 0);
 
 // ---------------------------------------------------------------------------
 
-/** @return array<string, string> */
+/**
+ * Reads KEY=value pairs from .env files in the directory and its parents; the nearest file wins.
+ *
+ * @return array<string, string>
+ */
 function loadEnv(string $dir): array
 {
     $values = [];
@@ -164,7 +168,11 @@ function loadEnv(string $dir): array
     return array_filter($values, static fn (string $v): bool => $v !== '');
 }
 
-/** @return string[] */
+/**
+ * PrestaShop major versions to check, from ps_versions_compliancy in the main file.
+ *
+ * @return string[]
+ */
 function detectMajors(?string $moduleDir, string $zip): array
 {
     $code = '';
@@ -232,6 +240,8 @@ function printReport(array $data): array
 }
 
 /**
+ * Flattens the different item formats of the validator report into a list of messages.
+ *
  * @param array<mixed> $items
  *
  * @return array<int, array{message: string, file?: string, line?: int|string, type?: string}>

@@ -1,0 +1,78 @@
+name: Release
+
+# Same convention as the PrestaShopHeaven modules: a push to main/master with the commit
+# message "Release X.Y.Z - <notes>" releases version X.Y.Z:
+#   1. the version in composer.json must be X.Y.Z and tag vX.Y.Z must not exist yet
+#   2. all checks must pass (ci.yml)
+#   3. tag vX.Y.Z + GitHub release with the notes
+#   4. Packagist is told to update (secrets PACKAGIST_USERNAME and PACKAGIST_TOKEN), so
+#      `composer update prestashopheaven/module-dev-tools` in a module picks up the new version.
+on:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    if: startsWith(github.event.head_commit.message, 'Release ')
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      notes: ${{ steps.meta.outputs.notes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version from the commit message
+        id: meta
+        env:
+          MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          first_line=$(printf '%s' "$MESSAGE" | head -n1)
+          if [[ ! "$first_line" =~ ^Release[[:space:]]([0-9]+\.[0-9]+\.[0-9]+)[[:space:]]-[[:space:]](.+)$ ]]; then
+            echo "::error::Commit message must be: Release X.Y.Z - <notes>"; exit 1
+          fi
+          echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          echo "notes=${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
+
+      - name: Version in composer.json must match, tag must be new
+        run: |
+          version="${{ steps.meta.outputs.version }}"
+          in_composer=$(php -r 'echo json_decode(file_get_contents("composer.json"), true)["version"] ?? "";')
+          if [ "$in_composer" != "$version" ]; then
+            echo "::error::Set \"version\": \"$version\" in composer.json (now: \"$in_composer\")"; exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/v$version" > /dev/null; then
+            echo "::error::Tag v$version already exists"; exit 1
+          fi
+
+  checks:
+    needs: prepare
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: [prepare, checks]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.prepare.outputs.version }}
+          name: ${{ needs.prepare.outputs.version }}
+          body: ${{ needs.prepare.outputs.notes }}
+          target_commitish: ${{ github.sha }}
+
+      - name: Update Packagist
+        env:
+          PACKAGIST_USERNAME: ${{ secrets.PACKAGIST_USERNAME }}
+          PACKAGIST_TOKEN: ${{ secrets.PACKAGIST_TOKEN }}
+        run: |
+          if [ -z "$PACKAGIST_TOKEN" ]; then
+            echo "::warning::No PACKAGIST_TOKEN secret: Packagist updates only through its GitHub hook."
+            exit 0
+          fi
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            "https://packagist.org/api/update-package?username=${PACKAGIST_USERNAME}&apiToken=${PACKAGIST_TOKEN}" \
+            -d "{\"repository\":{\"url\":\"https://github.com/${{ github.repository }}\"}}"

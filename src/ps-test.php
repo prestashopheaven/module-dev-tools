@@ -127,12 +127,19 @@ switch ($command) {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * One PrestaShop test shop (MySQL + PrestaShop container) for one version, managed with docker compose.
+ */
 final class Shop
 {
     public readonly int $port;
     private readonly string $project;
 
-    /** @param array<string, mixed> $config */
+    /**
+     * Derives the port and the compose project name from the PrestaShop version.
+     *
+     * @param array<string, mixed> $config
+     */
     public function __construct(public readonly string $version, private readonly array $config)
     {
         $parts = array_map('intval', explode('.', $version));
@@ -140,6 +147,9 @@ final class Shop
         $this->project = $config['module'] . '-ps' . str_replace('.', '', $version);
     }
 
+    /**
+     * Starts the shop if it is not running and waits until the automatic installation has finished.
+     */
     public function up(): void
     {
         out("\n== PrestaShop {$this->version} on port {$this->port} ==");
@@ -162,11 +172,17 @@ final class Shop
         fail("PrestaShop {$this->version} did not become ready. Check: docker compose -p {$this->project} logs prestashop");
     }
 
+    /**
+     * Stops the shop and removes its containers and volumes.
+     */
     public function down(): void
     {
         $this->compose('down -v --remove-orphans', true);
     }
 
+    /**
+     * True when the front page answers and the installation has written its configuration.
+     */
     public function isReady(): bool
     {
         $status = httpStatus("http://localhost:{$this->port}/");
@@ -187,7 +203,11 @@ final class Shop
         removeDir(dirname($stage));
     }
 
-    /** @return array{ok: bool, output: string} */
+    /**
+     * Runs "bin/console prestashop:module <action>" for the module and empties the cache afterwards.
+     *
+     * @return array{ok: bool, output: string}
+     */
     public function console(string $action): array
     {
         $name = $this->config['module'];
@@ -202,7 +222,11 @@ final class Shop
         return ['ok' => $ok, 'output' => $result['output']];
     }
 
-    /** @return array<string, mixed> */
+    /**
+     * Everything the module left in the shop (module row, hooks, configuration, tabs, overrides, tables), via ps-probe.php.
+     *
+     * @return array<string, mixed>
+     */
     public function snapshot(): array
     {
         $this->compose('cp ' . escapeshellarg(__DIR__ . '/ps-probe.php') . ' prestashop:/tmp/ps-probe.php');
@@ -215,7 +239,11 @@ final class Shop
         return $data;
     }
 
-    /** @return array{ok: bool, output: string} */
+    /**
+     * Opens the main front-office pages and fails on non-200 answers or PHP errors in the HTML.
+     *
+     * @return array{ok: bool, output: string}
+     */
     public function smoke(): array
     {
         $problems = [];
@@ -311,7 +339,11 @@ final class Shop
         return ['ok' => $problems === [], 'output' => implode("\n", $problems)];
     }
 
-    /** @return array{ok: bool, output: string} */
+    /**
+     * Runs the PHPUnit integration suite inside the shop container.
+     *
+     * @return array{ok: bool, output: string}
+     */
     public function integration(): array
     {
         $name = $this->config['module'];
@@ -321,7 +353,11 @@ final class Shop
         return ['ok' => $result['code'] === 0, 'output' => lastLines($result['output'], 15)];
     }
 
-    /** @return array{ok: bool, output: string} */
+    /**
+     * Runs the Behat scenarios from the repository against this shop over HTTP.
+     *
+     * @return array{ok: bool, output: string}
+     */
     public function behat(): array
     {
         $dir = ROOT . '/tests/behat';
@@ -338,7 +374,11 @@ final class Shop
         return ['ok' => $code === 0, 'output' => lastLines(implode("\n", $lines), 15)];
     }
 
-    /** @return array{code: int, output: string} */
+    /**
+     * Runs a shell command inside the PrestaShop container and returns exit code and output.
+     *
+     * @return array{code: int, output: string}
+     */
     public function exec(string $shell, string $user = 'www-data'): array
     {
         $cmd = $this->composeCmd('exec -T -u ' . $user . ' prestashop sh -c ' . escapeshellarg($shell));
@@ -347,6 +387,9 @@ final class Shop
         return ['code' => $code, 'output' => trim(implode("\n", $lines))];
     }
 
+    /**
+     * Runs a docker compose command for this shop and stops the runner when it fails.
+     */
     private function compose(string $args, bool $show = false): void
     {
         $cmd = $this->composeCmd($args);
@@ -360,6 +403,9 @@ final class Shop
         }
     }
 
+    /**
+     * Builds a docker compose command line for this shop, with its version, port and project name.
+     */
     private function composeCmd(string $args): string
     {
         putenv('PS_VERSION=' . $this->version);
@@ -371,6 +417,8 @@ final class Shop
 }
 
 /**
+ * Runs every step for each PrestaShop version and prints the result table; returns the exit code.
+ *
  * @param string[] $versions
  * @param string[] $flags
  */
@@ -430,6 +478,8 @@ function runMatrix(array $versions, array $flags): int
 }
 
 /**
+ * Installs each earlier release tag, upgrades it to the current code and compares with a fresh install.
+ *
  * @param array<string, mixed> $fresh snapshot of a fresh install of the current code
  *
  * @return array<string, array{ok: bool, output: string}>
@@ -527,7 +577,11 @@ function releaseZipTest(Shop $shop, ?string $zip, array $fresh): array
     return $results;
 }
 
-/** @return array<string, mixed> */
+/**
+ * Reinstalls the current code and returns the snapshot of that fresh install.
+ *
+ * @return array<string, mixed>
+ */
 function freshSnapshot(Shop $shop): array
 {
     global $moduleDir;
@@ -538,7 +592,11 @@ function freshSnapshot(Shop $shop): array
     return $shop->snapshot();
 }
 
-/** @return array<string, string> tag => version, ascending, only versions below $current */
+/**
+ * Release tags (vX.Y.Z) older than the current version, oldest first.
+ *
+ * @return array<string, string> tag => version, ascending, only versions below $current
+ */
 function releaseTags(string $current): array
 {
     exec('git -C ' . escapeshellarg(ROOT) . ' tag --list 2>&1', $lines, $code);
@@ -584,6 +642,9 @@ function exportRelease(string $tag): ?string
     return $dir;
 }
 
+/**
+ * Reads $this->version from the main module file.
+ */
 function currentVersion(string $moduleDir): string
 {
     $code = (string) file_get_contents($moduleDir . '/' . basename($moduleDir) . '.php');
@@ -593,6 +654,8 @@ function currentVersion(string $moduleDir): string
 }
 
 /**
+ * Differences between two snapshots (version, hooks, configuration, tabs, overrides, table schemas).
+ *
  * @param array<string, mixed> $expected
  * @param array<string, mixed> $actual
  *
@@ -627,6 +690,8 @@ function compareSnapshots(array $expected, array $actual): array
 }
 
 /**
+ * Checks that an uninstall left nothing behind.
+ *
  * @param array<string, mixed> $snapshot
  *
  * @return array{ok: bool, output: string}
@@ -649,13 +714,21 @@ function cleanCheck(array $snapshot): array
     return ['ok' => $left === [], 'output' => implode("\n", $left)];
 }
 
-/** @return array{ok: bool, output: string} */
+/**
+ * Turns a condition into a step result with a message when it fails.
+ *
+ * @return array{ok: bool, output: string}
+ */
 function check(bool $ok, string $message): array
 {
     return ['ok' => $ok, 'output' => $ok ? '' : $message];
 }
 
-/** @param array<string, array{ok: bool, output: string}> $results */
+/**
+ * Prints the OK/FAIL lines of a result list, with the details of failures.
+ *
+ * @param array<string, array{ok: bool, output: string}> $results
+ */
 function printResults(array $results): void
 {
     foreach ($results as $step => $result) {
@@ -666,12 +739,19 @@ function printResults(array $results): void
     }
 }
 
-/** @param array<string, array{ok: bool, output: string}> $results */
+/**
+ * True when every step in the result list passed.
+ *
+ * @param array<string, array{ok: bool, output: string}> $results
+ */
 function allOk(array $results): bool
 {
     return !in_array(false, array_column($results, 'ok'), true);
 }
 
+/**
+ * Stops with a clear message when Docker, the Docker daemon or docker compose is missing.
+ */
 function requireDocker(): void
 {
     $cli = (string) @shell_exec('docker --version 2>&1');
@@ -687,7 +767,11 @@ function requireDocker(): void
     }
 }
 
-/** @param string[] $args */
+/**
+ * Returns the PrestaShop version from the arguments or stops with usage help.
+ *
+ * @param string[] $args
+ */
 function requireVersion(array $args): string
 {
     if (!isset($args[0]) || !preg_match('/^\d+\.\d+\.\d+$/', $args[0])) {
@@ -697,12 +781,19 @@ function requireVersion(array $args): string
     return $args[0];
 }
 
+/**
+ * HTTP status code of a GET request.
+ */
 function httpStatus(string $url): int
 {
     return httpGet($url)[0];
 }
 
-/** @return array{0: int, 1: string} */
+/**
+ * GET request without following redirects; returns status code and body.
+ *
+ * @return array{0: int, 1: string}
+ */
 function httpGet(string $url): array
 {
     $context = stream_context_create(['http' => ['timeout' => 30, 'ignore_errors' => true, 'follow_location' => 0]]);
@@ -763,7 +854,11 @@ function hiddenInputs(string $html): array
     return $fields;
 }
 
-/** @param string[] $exclude directory names to skip */
+/**
+ * Copies a directory recursively, skipping directories with the given names.
+ *
+ * @param string[] $exclude directory names to skip
+ */
 function copyDir(string $source, string $target, array $exclude): void
 {
     $source = rtrim(str_replace('\\', '/', $source), '/');
@@ -781,6 +876,9 @@ function copyDir(string $source, string $target, array $exclude): void
     }
 }
 
+/**
+ * Deletes a directory with everything in it.
+ */
 function removeDir(string $dir): void
 {
     if (!is_dir($dir)) {
@@ -793,16 +891,25 @@ function removeDir(string $dir): void
     rmdir($dir);
 }
 
+/**
+ * The last $n lines of a text.
+ */
 function lastLines(string $text, int $n): string
 {
     return implode("\n", array_slice(explode("\n", trim($text)), -$n));
 }
 
+/**
+ * Prints a line to standard output.
+ */
 function out(string $message): void
 {
     echo $message . "\n";
 }
 
+/**
+ * Prints an error and stops the runner with exit code 1.
+ */
 function fail(string $message): void
 {
     fwrite(STDERR, "ERROR: $message\n");
