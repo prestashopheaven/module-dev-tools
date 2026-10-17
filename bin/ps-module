@@ -1,0 +1,219 @@
+#!/usr/bin/env php
+<?php
+/**
+ * NOTICE OF LICENSE
+ *
+ * This source file is subject to the Academic Free License version 3.0
+ * that is bundled with this package in the file LICENSE.md.
+ * It is also available through the world-wide-web at this URL:
+ * https://opensource.org/licenses/AFL-3.0
+ *
+ * @author    George van Engers | PrestaShopHeaven.com
+ * @copyright Since 2026 George van Engers
+ * @license   https://opensource.org/licenses/AFL-3.0 Academic Free License version 3.0
+ */
+
+/*
+ * ps-module: development commands for PrestaShopHeaven modules.
+ * Run inside the module directory (composer scripts do that automatically).
+ *
+ *   ps-module verify                 the full definition of done, in order, stops at the first failure:
+ *                                    check, validate, build, validate-zip, shops run, validator-api
+ *   ps-module check                  composer "checks" (lint, cs, phpstan, compat, conventions, tests) + stamp
+ *   ps-module conventions            docblocks on everything + clean main class (DOC-01, MOD-01)
+ *   ps-module phpstan [<ps-version>...]
+ *   ps-module validate [<dir|zip>]   validator pre-check of the source (default) or a zip
+ *   ps-module build                  ../dist/<module>.zip (no-dev vendor, scoped, index.php everywhere)
+ *   ps-module validate-zip           validator pre-check of ../dist/<module>.zip
+ *   ps-module validator-api          upload ../dist/<module>.zip to validator.prestashop.com (needs a key in .env)
+ *   ps-module shops <command> ...    PrestaShop test shops in Docker: doctor, run, up, down, integration, behat, upgrade
+ *   ps-module status [--json]        which definition-of-done steps passed on the current code
+ *   ps-module skip <step> "<reason>" mark a step that cannot run (reported to the user)
+ */
+
+declare(strict_types=1);
+
+$src = dirname(__DIR__) . '/src';
+require_once $src . '/dod.php';
+
+$args = array_slice($argv, 1);
+$command = array_shift($args) ?? 'help';
+
+$moduleDir = findModuleDir((string) getcwd());
+$repoDir = $moduleDir !== null ? dod_repo_dir($moduleDir) : null;
+
+switch ($command) {
+    case 'check':
+        requireModule($moduleDir);
+        $code = run('composer run-script checks', $moduleDir);
+        if ($code === 0 && $repoDir !== null) {
+            dod_stamp($repoDir, 'check');
+            echo "ps-module: 'check' passed and is recorded for the current code.\n";
+        }
+        exit($code);
+
+    case 'conventions':
+        exit(script('conventions-check.php', array_merge([(string) ($moduleDir ?? getcwd())], $args)));
+
+    case 'phpstan':
+        exit(script('phpstan.php', $args));
+
+    case 'validate':
+        requireModule($moduleDir);
+        exit(script('validate.php', [$args[0] ?? $moduleDir]));
+
+    case 'build':
+        requireModule($moduleDir);
+        exit(script('build-zip.php', [$moduleDir]));
+
+    case 'validate-zip':
+        requireModule($moduleDir);
+        exit(script('validate.php', [distZip($moduleDir)]));
+
+    case 'validator-api':
+        requireModule($moduleDir);
+        exit(script('validator-api.php', array_merge([$args[0] ?? distZip($moduleDir)], array_slice($args, 1))));
+
+    case 'shops':
+        requireModule($moduleDir);
+        exit(script('ps-test.php', $args, (string) $repoDir));
+
+    case 'status':
+        requireRepo($repoDir);
+        $status = dod_status($repoDir);
+        if (in_array('--json', $args, true)) {
+            echo json_encode($status, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n";
+        } else {
+            echo "Definition of done for {$status['module']}:\n";
+            foreach ($status['steps'] as $step => $s) {
+                $info = in_array($s['state'], ['ok', 'skipped'], true) ? $s['note'] : dod_command($step, $status['module']);
+                printf("  %-14s %-8s %s\n", $step, $s['state'], $info);
+            }
+            echo $status['complete'] ? "Complete.\n" : "Not complete.\n";
+        }
+        exit($status['complete'] ? 0 : 1);
+
+    case 'skip':
+        requireRepo($repoDir);
+        [$step, $reason] = [$args[0] ?? '', trim($args[1] ?? '')];
+        if ($step === '' || $reason === '') {
+            fwrite(STDERR, "Usage: ps-module skip <step> \"<reason>\"\n");
+            exit(2);
+        }
+        dod_skip($repoDir, $step, $reason);
+        echo "ps-module: '$step' marked as skipped ($reason). Tell the user.\n";
+        exit(0);
+
+    case 'fingerprint':
+        requireRepo($repoDir);
+        echo dod_fingerprint($repoDir) . "\n";
+        exit(0);
+
+    case 'verify':
+        requireModule($moduleDir);
+        $steps = [
+            'check' => ['self', ['check']],
+            'validate-src' => ['self', ['validate']],
+            'build' => ['self', ['build']],
+            'validate-zip' => ['self', ['validate-zip']],
+        ];
+        $required = dod_required_steps((string) $repoDir);
+        if (in_array('shop-tests', $required, true)) {
+            $steps['shop-tests'] = ['self', ['shops', 'run']];
+        }
+        if (in_array('validator-api', $required, true)) {
+            $steps['validator-api'] = ['self', ['validator-api']];
+        }
+        foreach ($steps as $label => [, $sub]) {
+            echo "\n##### $label #####\n";
+            $code = run(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__FILE__) . ' ' . implode(' ', array_map('escapeshellarg', $sub)), $moduleDir);
+            if ($code !== 0) {
+                fwrite(STDERR, "\nps-module verify: '$label' failed. Fix it and run verify again.\n");
+                exit($code);
+            }
+        }
+        exit(run(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__FILE__) . ' status', $moduleDir));
+
+    default:
+        $help = (string) file_get_contents(__FILE__);
+        preg_match('#/\*\n(.*?)\*/#s', $help, $m);
+        echo trim(preg_replace('/^ \* ?/m', '', $m[1] ?? '')) . "\n";
+        exit($command === 'help' ? 0 : 2);
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * Finds the module directory: the current directory when it holds <name>/<name>.php,
+ * otherwise the module named in module.spec.json of the repository.
+ */
+function findModuleDir(string $cwd): ?string
+{
+    $cwd = dod_norm($cwd);
+    if (is_file($cwd . '/' . basename($cwd) . '.php') && is_file($cwd . '/composer.json')) {
+        return $cwd;
+    }
+    $repo = dod_repo_dir($cwd);
+
+    return $repo !== null ? dod_module_dir($repo) : null;
+}
+
+/**
+ * Stops with a clear message when the command needs a module directory.
+ */
+function requireModule(?string $moduleDir): void
+{
+    if ($moduleDir === null) {
+        fwrite(STDERR, "ps-module: run this inside a module (a directory with <name>.php and composer.json).\n");
+        exit(2);
+    }
+}
+
+/**
+ * Stops with a clear message when the command needs a module repository.
+ */
+function requireRepo(?string $repoDir): void
+{
+    if ($repoDir === null) {
+        fwrite(STDERR, "ps-module: no module repository found (module.spec.json).\n");
+        exit(2);
+    }
+}
+
+/**
+ * Path of the release zip of a module: <repo>/dist/<module>.zip.
+ */
+function distZip(string $moduleDir): string
+{
+    return dirname($moduleDir) . '/dist/' . basename($moduleDir) . '.zip';
+}
+
+/**
+ * Runs one of the scripts in src/ with the given arguments in the given directory.
+ *
+ * @param string[] $args
+ */
+function script(string $file, array $args, string $cwd = ''): int
+{
+    $command = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(dirname(__DIR__) . '/src/' . $file)
+        . ($args === [] ? '' : ' ' . implode(' ', array_map('escapeshellarg', $args)));
+
+    return run($command, $cwd !== '' ? $cwd : (string) getcwd());
+}
+
+/**
+ * Runs a shell command in a directory, streaming its output, and returns the exit code.
+ */
+function run(string $command, ?string $cwd): int
+{
+    $previous = getcwd();
+    if ($cwd !== null && $cwd !== '') {
+        chdir($cwd);
+    }
+    passthru($command, $code);
+    if ($previous !== false) {
+        chdir($previous);
+    }
+
+    return (int) $code;
+}

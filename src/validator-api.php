@@ -1,0 +1,260 @@
+<?php
+/**
+ * Sends a module to the online PrestaShop validator (validator.prestashop.com)
+ * and prints the report.
+ *
+ * Usage:
+ *   php validator-api.php <module-dir>      builds the zip first (build-zip.php: composer --no-dev,
+ *                                           dev files stripped, index.php everywhere), then uploads it
+ *   php validator-api.php <module.zip>      uploads an existing zip
+ *   options: --compat=8,9   PrestaShop major versions to check (default: derived from
+ *                           ps_versions_compliancy in the main file, else 9)
+ *            --json         print the raw JSON response
+ *
+ * API key: env PRESTASHOP_VALIDATOR_API_KEY, or a .env file in the module dir or any
+ * parent directory (e.g. C:/_GIT/_PrestaShopHeaven/MODULES/.env).
+ *
+ * The API is not officially documented. Request format: multipart POST /api/modules with
+ * fields "archive" (zip), "key" and "compatibility_<major>" = true.
+ * The raw response is saved next to the zip as <module>.validator.json.
+ *
+ * Exit code: 0 = no errors reported, 1 = errors reported, 2 = request failed.
+ */
+
+declare(strict_types=1);
+
+$options = [];
+$target = '';
+foreach (array_slice($argv, 1) as $arg) {
+    if (preg_match('/^--(compat|json)(?:=(.*))?$/', $arg, $m)) {
+        $options[$m[1]] = $m[2] ?? true;
+    } else {
+        $target = $arg;
+    }
+}
+if ($target === '' || !file_exists($target)) {
+    fwrite(STDERR, "Usage: php validator-api.php <module-dir|module.zip> [--compat=8,9] [--json]\n");
+    exit(2);
+}
+$target = str_replace('\\', '/', (string) realpath($target));
+
+if (!extension_loaded('curl')) {
+    fwrite(STDERR, "The PHP curl extension is required.\n");
+    exit(2);
+}
+
+$env = loadEnv(is_dir($target) ? $target : dirname($target));
+$apiKey = getenv('PRESTASHOP_VALIDATOR_API_KEY') ?: ($env['PRESTASHOP_VALIDATOR_API_KEY'] ?? '');
+$baseUrl = rtrim(getenv('PRESTASHOP_VALIDATOR_URL') ?: ($env['PRESTASHOP_VALIDATOR_URL'] ?? 'https://validator.prestashop.com'), '/');
+if ($apiKey === '') {
+    fwrite(STDERR, "No API key. Set PRESTASHOP_VALIDATOR_API_KEY in a .env file (module dir or a parent dir) or as an environment variable.\n");
+    exit(2);
+}
+
+// 1. Zip
+if (is_dir($target)) {
+    $buildScript = __DIR__ . '/build-zip.php';
+    $output = [];
+    exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($buildScript) . ' ' . escapeshellarg($target), $output, $code);
+    if ($code !== 0) {
+        fwrite(STDERR, "Building the zip failed:\n" . implode("\n", $output) . "\n");
+        exit(2);
+    }
+    $zip = trim((string) end($output));
+    $moduleDir = $target;
+} else {
+    $zip = $target;
+    $moduleDir = null;
+}
+fwrite(STDERR, "Zip: $zip\n");
+
+// 2. Compatibility flags
+$majors = isset($options['compat'])
+    ? array_filter(array_map('trim', explode(',', (string) $options['compat'])))
+    : detectMajors($moduleDir, $zip);
+fwrite(STDERR, 'Checking compatibility with PrestaShop ' . implode(', ', $majors) . "\n");
+
+// 3. Upload
+$fields = [
+    'archive' => new CURLFile($zip, 'application/zip', basename($zip)),
+    'key' => $apiKey,
+];
+foreach ($majors as $major) {
+    $fields['compatibility_' . $major] = 'true';
+}
+
+$ch = curl_init($baseUrl . '/api/modules');
+curl_setopt_array($ch, [
+    CURLOPT_POST => true,
+    CURLOPT_POSTFIELDS => $fields,
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_TIMEOUT => 300,
+    CURLOPT_CONNECTTIMEOUT => 20,
+    CURLOPT_HTTPHEADER => ['Accept: application/json'],
+]);
+$body = curl_exec($ch);
+$status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+$error = curl_error($ch);
+
+if ($body === false) {
+    fwrite(STDERR, "Request failed: $error\n");
+    exit(2);
+}
+$reportFile = preg_replace('/\.zip$/i', '', $zip) . '.validator.json';
+file_put_contents($reportFile, $body);
+
+$data = json_decode((string) $body, true);
+if ($status >= 400 || !is_array($data)) {
+    fwrite(STDERR, "Validator answered HTTP $status:\n" . substr((string) $body, 0, 2000) . "\n");
+    exit(2);
+}
+// Errors come back as HTTP 200 with {"code": 401, "message": "..."} in the body.
+if (isset($data['code']) && is_numeric($data['code']) && (int) $data['code'] >= 400) {
+    fwrite(STDERR, "Validator error {$data['code']}: " . ($data['message'] ?? 'unknown') . "\n"
+        . ((int) $data['code'] === 401 ? "Check PRESTASHOP_VALIDATOR_API_KEY in .env.\n" : ''));
+    exit(2);
+}
+// A real report has at least one category with a list of results.
+if (array_filter($data, 'is_array') === []) {
+    fwrite(STDERR, "Unexpected response from the validator (no report categories):\n" . substr((string) $body, 0, 2000) . "\n");
+    exit(2);
+}
+
+if (isset($options['json'])) {
+    echo json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n";
+}
+
+// 4. Report
+[$errors, $total] = printReport($data);
+fwrite(STDERR, "Raw report: $reportFile\n");
+
+if ($errors === 0 && is_file(__DIR__ . '/dod.php')) {
+    require_once __DIR__ . '/dod.php';
+    $meta = is_file($zip . '.json') ? json_decode((string) file_get_contents($zip . '.json'), true) : null;
+    $repoDir = dod_repo_dir(dirname($zip));
+    if ($repoDir !== null && is_array($meta) && isset($meta['fingerprint'])) {
+        dod_stamp($repoDir, 'validator-api', $meta['fingerprint']);
+    }
+}
+
+exit($errors > 0 ? 1 : 0);
+
+// ---------------------------------------------------------------------------
+
+/** @return array<string, string> */
+function loadEnv(string $dir): array
+{
+    $values = [];
+    $dirs = [];
+    for ($d = $dir; $d !== dirname($d); $d = dirname($d)) {
+        $dirs[] = $d;
+    }
+    // Nearest .env wins: read from the top down, later files overwrite.
+    foreach (array_reverse($dirs) as $d) {
+        if (!is_file("$d/.env")) {
+            continue;
+        }
+        foreach (file("$d/.env", FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+            if (preg_match('/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/', $line, $m) && $line[0] !== '#') {
+                $values[$m[1]] = trim($m[2], "\"'");
+            }
+        }
+    }
+
+    return array_filter($values, static fn (string $v): bool => $v !== '');
+}
+
+/** @return string[] */
+function detectMajors(?string $moduleDir, string $zip): array
+{
+    $code = '';
+    if ($moduleDir !== null) {
+        $code = (string) @file_get_contents($moduleDir . '/' . basename($moduleDir) . '.php');
+    } else {
+        $za = new ZipArchive();
+        if ($za->open($zip) === true) {
+            $name = explode('/', (string) $za->getNameIndex(0))[0];
+            $code = (string) $za->getFromName("$name/$name.php");
+            $za->close();
+        }
+    }
+    if (!preg_match("/'min'\s*=>\s*'(\d+)\./", $code, $min)) {
+        return ['9'];
+    }
+    $minMajor = max(8, (int) $min[1]);
+    $maxMajor = preg_match("/'max'\s*=>\s*'(\d+)\./", $code, $max) ? (int) $max[1] : 9;
+    $maxMajor = max($minMajor, min(9, $maxMajor));
+
+    return array_map('strval', range($minMajor, $maxMajor));
+}
+
+/**
+ * The response is keyed by category. Items are strings, {message,file,line,type}
+ * objects, or {messages: [{content: [...]}]} groups.
+ *
+ * @param array<string, mixed> $data
+ *
+ * @return array{0: int, 1: int} [errors, total]
+ */
+function printReport(array $data): array
+{
+    $errors = 0;
+    $total = 0;
+    foreach ($data as $category => $items) {
+        if (!is_array($items) || strtolower((string) $category) === 'details') {
+            continue;
+        }
+        $lines = [];
+        foreach (flatten($items) as $msg) {
+            $type = strtolower($msg['type'] ?? 'info');
+            if ($type === 'error') {
+                ++$errors;
+            }
+            $where = isset($msg['file']) ? ' (' . $msg['file'] . (isset($msg['line']) ? ':' . $msg['line'] : '') . ')' : '';
+            $lines[] = sprintf('  [%s] %s%s', strtoupper($type), $msg['message'], $where);
+        }
+        if ($lines !== []) {
+            $total += count($lines);
+            echo "\n" . strtoupper((string) $category) . ' (' . count($lines) . ")\n" . implode("\n", $lines) . "\n";
+        }
+    }
+    if (isset($data['Details']) && is_array($data['Details'])) {
+        echo "\nDetails: " . implode(' | ', array_filter(array_map(static fn ($v) => is_scalar($v) ? (string) $v : null, $data['Details']))) . "\n";
+    }
+    echo "\n" . ($total === 0 ? 'No issues reported.' : "$total issue(s), $errors error(s).") . "\n";
+
+    return [$errors, $total];
+}
+
+/**
+ * @param array<mixed> $items
+ *
+ * @return array<int, array{message: string, file?: string, line?: int|string, type?: string}>
+ */
+function flatten(array $items): array
+{
+    $out = [];
+    foreach ($items as $item) {
+        if (is_string($item) && trim($item) !== '') {
+            $out[] = ['message' => trim($item)];
+        } elseif (is_array($item)) {
+            if (isset($item['message']) && is_string($item['message'])) {
+                $out[] = $item;
+            } elseif (isset($item['messages']) && is_array($item['messages'])) {
+                foreach ($item['messages'] as $group) {
+                    foreach ((array) ($group['content'] ?? []) as $content) {
+                        if (isset($content['message'])) {
+                            $out[] = $content;
+                        }
+                    }
+                }
+            } elseif (isset($item['content']) && is_array($item['content'])) {
+                $out = array_merge($out, flatten($item['content']));
+            } else {
+                $out = array_merge($out, flatten($item));
+            }
+        }
+    }
+
+    return $out;
+}

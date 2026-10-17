@@ -1,0 +1,38 @@
+# Throw-away PrestaShop test shop, one project per PrestaShop version.
+# Started by tools/ps-test.php; it sets PS_VERSION, PS_PORT and the project name.
+services:
+  db:
+    image: ${DB_IMAGE:-mysql:8.0}
+    environment:
+      MYSQL_ROOT_PASSWORD: prestashop
+      MYSQL_DATABASE: prestashop
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-pprestashop"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  prestashop:
+    image: prestashop/prestashop:${PS_VERSION:?set PS_VERSION}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${PS_PORT:-8100}:80"
+    environment:
+      DB_SERVER: db
+      DB_NAME: prestashop
+      DB_USER: root
+      DB_PASSWD: prestashop
+      DB_PREFIX: ps_
+      PS_INSTALL_AUTO: 1
+      PS_DOMAIN: localhost:${PS_PORT:-8100}
+      PS_FOLDER_ADMIN: admin-dev
+      PS_FOLDER_INSTALL: install-dev
+      PS_DEV_MODE: 1
+      PS_LANGUAGE: en
+      PS_COUNTRY: NL
+      ADMIN_MAIL: demo@prestashop.com
+      ADMIN_PASSWD: prestashop_demo
