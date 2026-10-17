@@ -34,6 +34,7 @@ $report = new Report();
 $skipDirs = $fromZip ? [] : ['vendor', 'tests', 'node_modules', '.cache', 'dist'];
 
 checkIdentity($moduleDir, $name, $rules, $report);
+checkDistribution($moduleDir, $report, $fromZip);
 checkStructure($moduleDir, $rules, $report, $skipDirs, $fromZip);
 // Dev files that build-zip.php leaves out of the package.
 $devFiles = ['.php-cs-fixer*', 'phpstan*', 'phpcs.xml*', 'phpunit.xml*', 'composer.json', 'composer.lock', '.license-header.txt'];
@@ -216,6 +217,21 @@ function checkIdentity(string $dir, string $name, array $rules, Report $r): void
         if (preg_match('#<version><!\[CDATA\[([^\]]+)\]\]></version>#', $xml, $x) && $x[1] !== $v[1]) {
             $r->error('identity', "config.xml version {$x[1]} differs from the class version {$v[1]}.", 'config.xml');
         }
+    }
+}
+
+/**
+ * Rules that depend on how the module is distributed (module.spec.json of the repository).
+ */
+function checkDistribution(string $dir, Report $r, bool $fromZip): void
+{
+    if ($fromZip) {
+        return; // the zip has no module.spec.json; the source check covers it
+    }
+    $specFile = dirname($dir) . '/module.spec.json';
+    $spec = is_file($specFile) ? json_decode((string) file_get_contents($specFile), true) : null;
+    if (is_array($spec) && ($spec['distribution'] ?? '') === 'addons' && is_dir("$dir/override")) {
+        $r->error('addons', 'Overrides are not accepted for modules sold on PrestaShop Addons; use hooks or service decoration.', 'override/');
     }
 }
 

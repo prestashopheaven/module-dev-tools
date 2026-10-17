@@ -48,6 +48,19 @@ $tabs = array_column($db->executeS(
     'SELECT class_name FROM `' . _DB_PREFIX_ . 'tab` WHERE module = \'' . pSQL($name) . '\' ORDER BY class_name'
 ) ?: [], 'class_name');
 
+// Override files that still carry this module's marker ("module: <name>").
+$overrides = [];
+if (is_dir($root . '/override')) {
+    $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root . '/override', FilesystemIterator::SKIP_DOTS));
+    foreach ($it as $file) {
+        if (str_ends_with($file->getFilename(), '.php')
+            && preg_match('/module:\s*' . preg_quote($name, '/') . '\b/', (string) file_get_contents($file->getPathname()))) {
+            $overrides[] = substr(str_replace('\\', '/', $file->getPathname()), strlen($root) + 1);
+        }
+    }
+    sort($overrides);
+}
+
 $tables = [];
 foreach ($db->executeS('SHOW TABLES LIKE \'' . pSQL(str_replace('_', '\_', _DB_PREFIX_ . $name)) . '%\'') ?: [] as $row) {
     $table = (string) reset($row);
@@ -78,5 +91,6 @@ echo json_encode([
     'hooks' => $hooks,
     'configuration' => $config,
     'tabs' => $tabs,
+    'overrides' => $overrides,
     'tables' => $tables,
 ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);

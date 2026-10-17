@@ -179,6 +179,9 @@ final class Shop
     {
         $name = $this->config['module'];
         $result = $this->exec("cd /var/www/html && php -d memory_limit=1G bin/console prestashop:module $action $name 2>&1");
+        // PS 8.1: right after the first install in a fresh shop, the compiled containers can
+        // still miss the module's services. Empty the cache; the next request rebuilds it.
+        $this->exec('rm -rf /var/www/html/var/cache/dev/* /var/www/html/var/cache/prod/*', 'root');
         // PrestaShop prints "<Action> action on module <name> succeeded." on success. Other
         // output (e.g. PHP warnings from the Docker image in dev mode) is not a failure.
         $ok = $result['code'] === 0 && preg_match('/\bsucceeded\b/i', $result['output']) === 1;
@@ -506,8 +509,8 @@ function currentVersion(string $moduleDir): string
 function compareSnapshots(array $expected, array $actual): array
 {
     $diff = [];
-    foreach (['installed', 'version', 'active', 'hooks', 'configuration', 'tabs'] as $key) {
-        if ($expected[$key] != $actual[$key]) {
+    foreach (['installed', 'version', 'active', 'hooks', 'configuration', 'tabs', 'overrides'] as $key) {
+        if (($expected[$key] ?? null) != ($actual[$key] ?? null)) {
             $diff[] = "$key: expected " . json_encode($expected[$key]) . ', got ' . json_encode($actual[$key]);
         }
     }
@@ -542,8 +545,8 @@ function cleanCheck(array $snapshot): array
     if ($snapshot['installed']) {
         $left[] = 'module is still installed';
     }
-    foreach (['hooks', 'configuration', 'tabs'] as $key) {
-        if ($snapshot[$key]) {
+    foreach (['hooks', 'configuration', 'tabs', 'overrides'] as $key) {
+        if (!empty($snapshot[$key])) {
             $left[] = "$key: " . implode(', ', $snapshot[$key]);
         }
     }
