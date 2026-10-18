@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.8.0] - 2026-10-18
+
+### Gewijzigd
+- Framesjabloon per module: `docs/frame/frame.html` + `frame.css` (plus eigen afbeeldingen en fonts). `docs
+  init` maakt het één keer aan met een beginstijl; daarna wordt het met de hand aangepast en schrijft geen
+  tool er nog in. Elke frame-render gebruikt het. De kleuren staan nu in `frame.css` (`:root`), niet meer
+  in `docs.json > frame`; `docs init` verhuist ze (en een `docs/content/frame.html`/`.css` uit 1.7).
+- `docs.json > frame` houdt alleen instellingen: `width`, `height`, `caption`, `address`, `logo`,
+  `counter`, `manual`, `enabled`, `engines`.
+
+### Toegevoegd
+- `ps-module docs frames --preview`: voorbeeldpagina's die de echte `frame.css` laden (bewerken, verversen).
+- Het docs-stempel (definition of done) hoort ook bij `docs/frame/`: een aangepast sjabloon vraagt een
+  nieuwe `docs build`.
+
 ## [1.7.0] - 2026-10-18
 
 ### Toegevoegd

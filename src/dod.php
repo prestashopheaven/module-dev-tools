@@ -116,13 +116,14 @@ function dod_fingerprint(string $repoDir): string
 }
 
 /**
- * Hash of the docs sources written by hand (docs/docs.json and docs/content/): the docs stamp is
- * only valid for this content, so an edited manual or marketing text needs a new docs build.
+ * Hash of the docs sources written by hand (docs/docs.json, docs/content/ and the frame template
+ * docs/frame/): the docs stamp is only valid for this content, so an edited manual, marketing text or
+ * frame template needs a new docs build.
  */
 function dod_docs_hash(string $repoDir): string
 {
     $docs = dod_norm($repoDir) . '/docs';
-    $files = array_merge([$docs . '/docs.json'], glob($docs . '/content/*.*') ?: [], glob($docs . '/content/*/*') ?: []);
+    $files = array_merge([$docs . '/docs.json'], glob($docs . '/content/*.*') ?: [], glob($docs . '/content/*/*') ?: [], glob($docs . '/frame/*') ?: [], glob($docs . '/frame/*/*') ?: []);
     $files = array_map(static fn (string $f): string => str_replace('\\', '/', $f), $files);
     sort($files);
     $hash = hash_init('sha256');

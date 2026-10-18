@@ -16,10 +16,10 @@
  * Framed screenshots (used by docs.php and docs-render.php): every screenshot of docs.json is put
  * into the frame template of the module, with its caption in the language printed on the frame.
  *
- * - Template: resources/docs/frame/frame.html + frame.css (the same for every module); a module may
- *   replace the template with docs/content/frame.html and add CSS in docs/content/frame.css.
- * - Style of the module: docs/docs.json > frame (colours, background, size, caption position).
- *   'ps-module docs init' gives each module a starting style from resources/docs/frame/styles.json.
+ * - Template of the module: docs/frame/frame.html + frame.css (+ images and fonts next to them). 'ps-module
+ *   docs init' creates it once from resources/docs/frame/ with a starting style of styles.json (chosen by
+ *   the module name). After that it belongs to the module (edited by hand): no tool writes to docs/frame/.
+ * - Settings: docs/docs.json > frame (size, caption position, logo, counter, engines).
  * - Captions: docs/content/<iso>/screenshots.json, {"<id>": {"title": "..", "text": ".."}}, written
  *   and translated by Claude like the manual (ps-module docs mark-translated <iso> screenshots).
  * - Output: docs/framed/<iso>/<id>.png (the Addons product images; the manuals use them as well),
@@ -33,20 +33,23 @@ const DOCS_FRAME_DEFAULTS = [
     'width' => 1600,
     'height' => 1200,
     'caption' => 'top',
-    'radius' => 28,
-    'font' => '',
     'address' => '',
     'logo' => true,
     'counter' => true,
     'manual' => true,
     'engines' => ['docker', 'chrome'],
 ];
-const DOCS_FRAME_COLOURS = ['frame', 'text', 'accent', 'device'];
+/** docs.json > frame keys of module-dev-tools 1.7 that are now in docs/frame/frame.css. */
+const DOCS_FRAME_LEGACY = ['style', 'background', 'frame', 'text', 'accent', 'device', 'radius', 'font'];
+const DOCS_FRAME_ASSETS = [
+    'png' => 'image/png', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'gif' => 'image/gif', 'webp' => 'image/webp',
+    'svg' => 'image/svg+xml', 'woff2' => 'font/woff2', 'woff' => 'font/woff', 'ttf' => 'font/ttf', 'otf' => 'font/otf',
+];
 const DOCS_CAPTION_TITLE = [3, 80];
 const DOCS_CAPTION_TEXT = [0, 220];
 
 /**
- * The frame settings of the module: defaults + docs.json > frame (without the style when it is missing).
+ * The frame settings of the module: defaults + docs.json > frame.
  *
  * @param array<string, mixed> $ctx
  *
@@ -54,10 +57,93 @@ const DOCS_CAPTION_TEXT = [0, 220];
  */
 function docs_frame_config(array $ctx): array
 {
-    $frame = (array) ($ctx['config']['frame'] ?? []);
-    $style = docs_frame_styles()[0] ?? [];
+    return array_merge(DOCS_FRAME_DEFAULTS, (array) ($ctx['config']['frame'] ?? []));
+}
 
-    return array_merge(DOCS_FRAME_DEFAULTS, array_intersect_key($style, array_flip(['background', 'frame', 'text', 'accent', 'device'])), $frame);
+/**
+ * The folder with the module's own frame template (docs/frame/).
+ *
+ * @param array<string, mixed> $ctx
+ */
+function docs_frame_dir(array $ctx): string
+{
+    return $ctx['docs'] . '/frame';
+}
+
+/**
+ * Loads the module's frame template (frame.html without its leading comment, frame.css); error when missing.
+ *
+ * @param array<string, mixed> $ctx
+ *
+ * @return array{html: string, css: string, error: string}
+ */
+function docs_frame_template(array $ctx): array
+{
+    $dir = docs_frame_dir($ctx);
+    $missing = array_values(array_filter(['frame.html', 'frame.css'], static fn (string $f): bool => !is_file("$dir/$f")));
+    if ($missing !== []) {
+        return ['html' => '', 'css' => '', 'error' => 'docs/frame/' . implode(' and docs/frame/', $missing) . ' missing: the frame template of this module (create it once with: ps-module docs init)'];
+    }
+    $html = (string) preg_replace('/^\s*(<!doctype[^>]*>\s*)?<!--.*?-->\s*/is', '$1', (string) file_get_contents("$dir/frame.html"), 1);
+
+    return ['html' => $html, 'css' => (string) file_get_contents("$dir/frame.css"), 'error' => ''];
+}
+
+/**
+ * The relative file references of a template text: url(..) in CSS, src=".." in HTML (no data:, http, /, #, {{..}}).
+ *
+ * @return array<int, array{0: string, 1: string}> [full match, reference]
+ */
+function docs_frame_references(string $text, bool $css): array
+{
+    $pattern = $css ? '/url\(\s*([\'"]?)([^\'")]+)\1\s*\)/i' : '/\bsrc\s*=\s*([\'"])([^\'"]+)\1/i';
+    preg_match_all($pattern, $text, $matches, PREG_SET_ORDER);
+    $refs = [];
+    foreach ($matches as $m) {
+        $ref = trim($m[2]);
+        if (!preg_match('~^(data:|[a-z][a-z0-9+.-]*:|//|/|#|\{\{)~i', $ref) && $ref !== '') {
+            $refs[] = [$m[0], $ref];
+        }
+    }
+
+    return $refs;
+}
+
+/**
+ * The file in docs/frame/ that a relative reference points to, or '' when it is not there (or outside it).
+ *
+ * @param array<string, mixed> $ctx
+ */
+function docs_frame_asset(array $ctx, string $ref): string
+{
+    $dir = realpath(docs_frame_dir($ctx));
+    $file = $dir !== false ? realpath($dir . '/' . rawurldecode((string) preg_replace('/[?#].*$/', '', $ref))) : false;
+    $ext = strtolower(pathinfo((string) $file, PATHINFO_EXTENSION));
+    if ($dir === false || $file === false || !is_file($file) || !str_starts_with($file, $dir . DIRECTORY_SEPARATOR) || !isset(DOCS_FRAME_ASSETS[$ext])) {
+        return '';
+    }
+
+    return $file;
+}
+
+/**
+ * Replaces the relative image/font references of the template by data: URIs (or file: URLs for a preview).
+ *
+ * @param array<string, mixed> $ctx
+ */
+function docs_frame_embed(array $ctx, string $text, bool $css, bool $preview = false): string
+{
+    foreach (docs_frame_references($text, $css) as [$match, $ref]) {
+        $file = docs_frame_asset($ctx, $ref);
+        if ($file === '') {
+            continue;
+        }
+        $type = DOCS_FRAME_ASSETS[strtolower(pathinfo($file, PATHINFO_EXTENSION))];
+        $uri = $preview ? docs_file_url($file) : "data:$type;base64," . base64_encode((string) file_get_contents($file));
+        $text = str_replace($match, $css ? 'url("' . $uri . '")' : 'src="' . $uri . '"', $text);
+    }
+
+    return $text;
 }
 
 /**
@@ -83,7 +169,7 @@ function docs_frame_styles(): array
 /**
  * The starting style of a module: one of styles.json, chosen by the module name (so modules differ).
  *
- * @return array<string, mixed>
+ * @return array{style: string, background: string, frame: string, text: string, accent: string, device: string}
  */
 function docs_frame_style_for(string $module): array
 {
@@ -97,11 +183,61 @@ function docs_frame_style_for(string $module): array
         'text' => (string) ($style['text'] ?? '#101828'),
         'accent' => (string) ($style['accent'] ?? '#1f4fd1'),
         'device' => (string) ($style['device'] ?? '#111827'),
-        'width' => DOCS_FRAME_DEFAULTS['width'],
-        'height' => DOCS_FRAME_DEFAULTS['height'],
-        'caption' => DOCS_FRAME_DEFAULTS['caption'],
-        'radius' => DOCS_FRAME_DEFAULTS['radius'],
     ];
+}
+
+/**
+ * Creates the module's frame template in docs/frame/ (only the files that are missing; never overwrites).
+ * Takes the colours of a 1.7 docs.json > frame block and a 1.7 docs/content/frame.html / frame.css along.
+ *
+ * @param array<string, mixed> $ctx
+ *
+ * @return string[] the files created
+ */
+function docs_frame_create_template(array $ctx): array
+{
+    $dir = docs_frame_dir($ctx);
+    $created = [];
+    $old = (array) ($ctx['config']['frame'] ?? []);
+    $style = docs_frame_style_for((string) $ctx['module']);
+    foreach (array_keys($style) as $key) {
+        if (is_string($old[$key] ?? null) && trim($old[$key]) !== '' && !preg_match('/[<>{};]|url\s*\(/i', $old[$key])) {
+            $style[$key] = trim($old[$key]);
+        }
+    }
+    if (!is_dir($dir)) {
+        mkdir($dir, 0775, true);
+    }
+    if (!is_file("$dir/frame.html")) {
+        $legacy = $ctx['docs'] . '/content/frame.html';
+        copy(is_file($legacy) ? $legacy : DOCS_RESOURCES . '/docs/frame/frame.html', "$dir/frame.html");
+        $created[] = 'docs/frame/frame.html' . (is_file($legacy) ? ' (from docs/content/frame.html)' : '');
+    }
+    if (!is_file("$dir/frame.css")) {
+        $css = strtr((string) file_get_contents(DOCS_RESOURCES . '/docs/frame/frame.css'), [
+            '%%module%%' => (string) $ctx['module'],
+            '%%style%%' => $style['style'],
+            '%%background%%' => $style['background'],
+            '%%frame%%' => $style['frame'],
+            '%%text%%' => $style['text'],
+            '%%accent%%' => $style['accent'],
+            '%%device%%' => $style['device'],
+        ]);
+        if (is_int($old['radius'] ?? null)) {
+            $css = str_replace('--radius: 28px;', '--radius: ' . $old['radius'] . 'px;', $css);
+        }
+        if (is_string($old['font'] ?? null) && trim($old['font']) !== '' && !preg_match('/[<>{};"]/', $old['font'])) {
+            $css = str_replace('--font: var(--lang-fonts);', '--font: "' . trim($old['font']) . '", var(--lang-fonts);', $css);
+        }
+        $legacy = $ctx['docs'] . '/content/frame.css';
+        if (is_file($legacy)) {
+            $css .= "\n/* From docs/content/frame.css */\n" . (string) file_get_contents($legacy);
+        }
+        file_put_contents("$dir/frame.css", $css);
+        $created[] = 'docs/frame/frame.css (starting style "' . $style['style'] . '")';
+    }
+
+    return $created;
 }
 
 /**
@@ -329,9 +465,9 @@ function docs_validate_frame(array $ctx, callable $add): void
     if ((array) ($ctx['config']['screenshots'] ?? []) === []) {
         return;
     }
-    $raw = $ctx['config']['frame'] ?? null;
+    $raw = $ctx['config']['frame'] ?? [];
     if (!is_array($raw)) {
-        $add('error', '*', $file, 'frame is missing: the style of the framed screenshots of this module (run: ps-module docs init, it adds a starting style; then adapt the colours to the module)');
+        $add('error', '*', $file, 'frame must be an object with the settings of the framed screenshots (width, height, caption, ...)');
 
         return;
     }
@@ -340,22 +476,11 @@ function docs_validate_frame(array $ctx, callable $add): void
 
         return;
     }
+    $legacy = array_values(array_intersect(DOCS_FRAME_LEGACY, array_keys($raw)));
+    if ($legacy !== []) {
+        $add('warning', '*', $file, 'frame.' . implode(', frame.', $legacy) . ': not used any more, the look of the frame is in docs/frame/frame.css (remove ' . (count($legacy) > 1 ? 'them' : 'it') . ' here)');
+    }
     $frame = docs_frame_config($ctx);
-    foreach (DOCS_FRAME_COLOURS as $key) {
-        if (!preg_match('/^#[0-9a-fA-F]{6}$/', (string) $frame[$key])) {
-            $add('error', '*', $file, "frame.$key must be a colour like #1f4fd1");
-        }
-    }
-    $background = (string) $frame['background'];
-    if (trim($background) === '' || preg_match('/url\s*\(|@import|[<>{};]/i', $background)) {
-        $add('error', '*', $file, 'frame.background must be a CSS colour or gradient (no url(), no ; or braces)');
-    }
-    if (preg_match('/^#[0-9a-fA-F]{6}$/', (string) $frame['frame']) && preg_match('/^#[0-9a-fA-F]{6}$/', (string) $frame['text'])) {
-        $ratio = docs_contrast((string) $frame['frame'], (string) $frame['text']);
-        if ($ratio < 4.5) {
-            $add('error', '*', $file, sprintf('frame.text on frame.frame has a contrast of %.1f:1, at least 4.5:1 is needed to read the caption', $ratio));
-        }
-    }
     foreach (['width', 'height'] as $key) {
         $value = $frame[$key];
         if (!is_int($value) || $value < 600 || $value > 4000) {
@@ -367,32 +492,53 @@ function docs_validate_frame(array $ctx, callable $add): void
     if (!in_array($frame['caption'], ['top', 'bottom'], true)) {
         $add('error', '*', $file, 'frame.caption must be "top" or "bottom"');
     }
-    if (!is_int($frame['radius']) || $frame['radius'] < 0 || $frame['radius'] > 120) {
-        $add('error', '*', $file, 'frame.radius must be 0-120 (pixels)');
-    }
-    if (preg_match('/[<>{};"]/', (string) $frame['font'])) {
-        $add('error', '*', $file, 'frame.font must be a font family name');
+    if (!is_string($frame['address']) || preg_match('/[<>]/', $frame['address'])) {
+        $add('error', '*', $file, 'frame.address must be plain text (shown in the browser address bar)');
     }
     foreach ((array) $frame['engines'] as $engine) {
         if (!in_array($engine, ['docker', 'chrome'], true)) {
             $add('error', '*', $file, "frame.engines: unknown engine '$engine' (docker, chrome)");
         }
     }
-    $template = $ctx['docs'] . '/content/frame.html';
-    if (is_file($template)) {
-        $html = (string) file_get_contents($template);
-        foreach (['{{css}}', '{{image}}', '{{title}}'] as $placeholder) {
-            if (!str_contains($html, $placeholder)) {
-                $add('error', '*', 'docs/content/frame.html', "the template has no $placeholder (start from module-dev-tools resources/docs/frame/frame.html)");
-            }
-        }
-        if (!str_contains($html, 'dataset.ready')) {
-            $add('error', '*', 'docs/content/frame.html', 'the template must set document.body.dataset.ready = "1" when the screenshot is placed (see resources/docs/frame/frame.html)');
+    foreach (['frame.html', 'frame.css'] as $old) {
+        if (is_file($ctx['docs'] . "/content/$old")) {
+            $add('warning', '*', "docs/content/$old", "not used any more: the frame template of the module is docs/frame/$old (docs init took it over when it created docs/frame/; remove this file)");
         }
     }
-    $css = $ctx['docs'] . '/content/frame.css';
-    if (is_file($css) && preg_match('/@import|url\s*\(\s*[\'"]?(?:https?:)?\/\//i', (string) file_get_contents($css))) {
-        $add('error', '*', 'docs/content/frame.css', 'no external files (@import, url(http..)): the frames are rendered offline');
+    $template = docs_frame_template($ctx);
+    if ($template['error'] !== '') {
+        $add('error', '*', 'docs/frame/', $template['error']);
+
+        return;
+    }
+    foreach (['{{css}}', '{{image}}', '{{title}}'] as $placeholder) {
+        if (!str_contains($template['html'], $placeholder)) {
+            $add('error', '*', 'docs/frame/frame.html', "the template has no $placeholder (compare with module-dev-tools resources/docs/frame/frame.html)");
+        }
+    }
+    if (!str_contains($template['html'], 'dataset.ready')) {
+        $add('error', '*', 'docs/frame/frame.html', "the template must set document.body.dataset.ready = '1' when the screenshot is placed (keep the script of resources/docs/frame/frame.html)");
+    }
+    foreach (['frame.html' => $template['html'], 'frame.css' => $template['css']] as $name => $text) {
+        // Comments (the explanations in the template) do not count.
+        $text = (string) preg_replace($name === 'frame.css' ? '~/\*.*?\*/~s' : '~<!--.*?-->~s', '', $text);
+        if (preg_match('/@import|url\s*\(\s*[\'"]?\s*(?:https?:)?\/\/|\b(?:src|href)\s*=\s*[\'"]\s*(?:https?:)?\/\//i', $text)) {
+            $add('error', '*', "docs/frame/$name", 'no external files (@import, http..., //...): the frames are rendered offline; put images and fonts in docs/frame/');
+        }
+        foreach (docs_frame_references($text, $name === 'frame.css') as [, $ref]) {
+            if (docs_frame_asset($ctx, $ref) === '') {
+                $add('error', '*', "docs/frame/$name", "'$ref' not found in docs/frame/ (images: " . implode(', ', array_keys(DOCS_FRAME_ASSETS)) . ')');
+            }
+        }
+    }
+    // Readability of the caption, when the colours are plain #rrggbb variables.
+    $css = (string) preg_replace('~/\*.*?\*/~s', '', $template['css']);
+    $var = static fn (string $name): string => preg_match('/--' . $name . '\s*:\s*(#[0-9a-fA-F]{6})\s*;/', $css, $m) ? $m[1] : '';
+    if ($var('frame') !== '' && $var('text') !== '') {
+        $ratio = docs_contrast($var('frame'), $var('text'));
+        if ($ratio < 4.5) {
+            $add('warning', '*', 'docs/frame/frame.css', sprintf('--text on --frame has a contrast of %.1f:1; at least 4.5:1 is needed to read the caption easily', $ratio));
+        }
     }
 }
 
@@ -451,15 +597,15 @@ function docs_frame_device(array $shot): string
 }
 
 /**
- * The CSS of a frame: frame.css, the variables of docs.json > frame, docs/content/frame.css.
+ * The CSS of a frame: the variables set per image (size, title size, fonts of the language), then the
+ * module's docs/frame/frame.css (its images and fonts embedded; for a preview: linked to the live file).
  *
  * @param array<string, mixed> $ctx
  * @param array<string, mixed> $frame
+ * @param array{html: string, css: string, error: string} $template
  */
-function docs_frame_css(array $ctx, string $iso, array $frame, string $title): string
+function docs_frame_css(array $ctx, string $iso, array $frame, string $title, array $template, bool $preview = false): string
 {
-    $font = trim((string) $frame['font']);
-    $stack = ($font !== '' ? '"' . $font . '", ' : '') . docs_font_stack($iso);
     // Longer titles (or wide scripts) get a smaller font, so a caption stays at two or three lines.
     $wide = preg_match_all('/[\x{3000}-\x{9fff}\x{ac00}-\x{d7af}\x{ff00}-\x{ffef}]/u', $title);
     $length = mb_strlen($title) + 0.9 * $wide;
@@ -467,56 +613,49 @@ function docs_frame_css(array $ctx, string $iso, array $frame, string $title): s
     $vars = [
         '--canvas-w' => (int) $frame['width'] . 'px',
         '--canvas-h' => (int) $frame['height'] . 'px',
-        '--bg' => (string) $frame['background'],
-        '--frame' => (string) $frame['frame'],
-        '--text' => (string) $frame['text'],
-        '--accent' => (string) $frame['accent'],
-        '--device' => (string) $frame['device'],
-        '--radius' => (int) $frame['radius'] . 'px',
-        '--font' => $stack,
         '--title-size' => $size . 'px',
+        '--lang-fonts' => docs_font_stack($iso),
     ];
-    $root = ":root {\n";
+    $root = "/* Set by ps-module for this image */\n:root {\n";
     foreach ($vars as $name => $value) {
         $root .= "    $name: $value;\n";
     }
     $root .= "}\n";
-    if ($frame['caption'] === 'bottom') {
-        $root .= ".layout-landscape .caption { order: 2; margin: 4px 0 22px; } .layout-landscape .stage { order: 1; margin: 6px 0 26px; } .layout-landscape .brand { order: 3; }\n";
+    if ($preview) {
+        // Preview: the live docs/frame/frame.css, so an edit shows after a browser refresh.
+        return $root . '</style><link rel="stylesheet" href="' . docs_e(docs_file_url(docs_frame_dir($ctx) . '/frame.css')) . '"><style>';
     }
-    $own = $ctx['docs'] . '/content/frame.css';
 
-    return (string) file_get_contents(DOCS_RESOURCES . '/docs/frame/frame.css') . "\n/* docs/docs.json > frame */\n" . $root
-        . (is_file($own) ? "\n/* docs/content/frame.css */\n" . (string) file_get_contents($own) : '');
+    return $root . "\n/* docs/frame/frame.css */\n" . docs_frame_embed($ctx, (string) preg_replace('~/\*.*?\*/~s', '', $template['css']), true);
 }
 
 /**
- * The filled frame page of one screenshot in one language.
+ * The filled frame page of one screenshot in one language (from the module's template docs/frame/).
  *
  * @param array<string, mixed> $ctx
  * @param array<string, mixed> $shot
  * @param array{title: string, text: string} $caption
  * @param array<string, mixed> $frame
+ * @param array{html: string, css: string, error: string} $template
  */
-function docs_frame_html(array $ctx, string $iso, array $shot, string $image, array $caption, int $number, int $count, array $frame): string
+function docs_frame_html(array $ctx, string $iso, array $shot, string $image, array $caption, int $number, int $count, array $frame, array $template, bool $preview = false): string
 {
-    $own = $ctx['docs'] . '/content/frame.html';
-    $template = (string) file_get_contents(is_file($own) ? $own : DOCS_RESOURCES . '/docs/frame/frame.html');
-    $template = (string) preg_replace('/<!--.*?-->\s*/s', '', $template, 1);
     $size = @getimagesize($image) ?: [1, 1];
     $device = docs_frame_device($shot);
     $portrait = in_array($device, ['mobile', 'tablet'], true) ? $size[1] > $size[0] : ($device !== 'desktop' && $size[1] > $size[0] * 1.1);
     $logoFile = $ctx['module_dir'] . '/logo.png';
+    $uri = static fn (string $file): string => $preview ? docs_file_url($file) : docs_data_uri($file);
     $values = [
-        '{{css}}' => docs_frame_css($ctx, $iso, $frame, $caption['title']),
-        '{{image}}' => docs_data_uri($image),
+        '{{css}}' => docs_frame_css($ctx, $iso, $frame, $caption['title'], $template, $preview),
+        '{{image}}' => $uri($image),
         '{{text_html}}' => $caption['text'] !== '' ? '<p class="text">' . docs_e($caption['text']) . '</p>' : '',
-        '{{logo_html}}' => $frame['logo'] !== false && is_file($logoFile) ? '<img class="brand-logo" src="' . docs_data_uri($logoFile) . '" alt="">' : '',
+        '{{logo_html}}' => $frame['logo'] !== false && is_file($logoFile) ? '<img class="brand-logo" src="' . $uri($logoFile) . '" alt="">' : '',
         '{{lang}}' => docs_e($iso),
         '{{dir}}' => docs_is_rtl($ctx, $iso) ? 'rtl' : 'ltr',
         '{{title}}' => docs_e($caption['title']),
         '{{device}}' => $device,
         '{{layout}}' => $portrait ? 'portrait' : 'landscape',
+        '{{caption}}' => $frame['caption'] === 'bottom' ? 'bottom' : 'top',
         '{{area}}' => docs_e((string) ($shot['area'] ?? '')),
         '{{display_name}}' => docs_e((string) $ctx['display_name']),
         '{{number}}' => $frame['counter'] !== false ? (string) $number : '',
@@ -524,7 +663,7 @@ function docs_frame_html(array $ctx, string $iso, array $shot, string $image, ar
         '{{address}}' => docs_e((string) $frame['address']),
         '{{id}}' => docs_e((string) ($shot['id'] ?? '')),
     ];
-    $html = strtr($template, $values);
+    $html = strtr(docs_frame_embed($ctx, $template['html'], false, $preview), $values);
     if ($frame['counter'] === false) {
         $html = str_replace('<span class="counter"> / </span>', '', $html);
     }
@@ -547,6 +686,10 @@ function docs_render_frames(array $ctx, array $languages, array $only = [], bool
         return ['ok' => true, 'message' => 'Framed screenshots: off (no screenshots, or docs.json > frame.enabled is false).', 'warnings' => [], 'rendered' => 0];
     }
     $frame = docs_frame_config($ctx);
+    $template = docs_frame_template($ctx);
+    if ($template['error'] !== '') {
+        return ['ok' => false, 'message' => 'Framed screenshots NOT made: ' . $template['error'], 'warnings' => ['framed screenshots NOT made: ' . $template['error']], 'rendered' => 0];
+    }
     $manifestFile = $ctx['docs'] . '/framed/manifest.json';
     $manifest = docs_read_json($manifestFile) ?? [];
     $items = (array) ($manifest['items'] ?? []);
@@ -578,7 +721,7 @@ function docs_render_frames(array $ctx, array $languages, array $only = [], bool
             if ($caption['fallback'] !== '') {
                 $warnings[] = "framed screenshot $key: no caption in $iso, uses the one of {$caption['fallback']} (docs/content/$iso/screenshots.json)";
             }
-            $html = docs_frame_html($local, $iso, $shot, $image, $caption, $n + 1, count($list), $frame);
+            $html = docs_frame_html($local, $iso, $shot, $image, $caption, $n + 1, count($list), $frame, $template);
             $hash = substr(sha1($html . '|' . $frame['width'] . 'x' . $frame['height']), 0, 16);
             $out = $ctx['docs'] . "/framed/$iso/$id.png";
             if (!$force && ($items[$key] ?? '') === $hash && is_file($out)) {
@@ -630,7 +773,7 @@ function docs_render_frames(array $ctx, array $languages, array $only = [], bool
     }
     ksort($items);
     docs_write_json($manifestFile, [
-        '_comment' => 'Generated by ps-module docs: the screenshots in the frame of the module (docs.json > frame, captions in docs/content/<iso>/screenshots.json). Do not edit.',
+        '_comment' => 'Generated by ps-module docs: the screenshots in the frame template of the module (docs/frame/, settings in docs.json > frame, captions in docs/content/<iso>/screenshots.json). Do not edit.',
         'size' => $frame['width'] . 'x' . $frame['height'],
         'engine' => $engine !== '' ? $engine : (string) ($manifest['engine'] ?? ''),
         'items' => $items,
@@ -639,6 +782,54 @@ function docs_render_frames(array $ctx, array $languages, array $only = [], bool
     $message = 'Framed screenshots (' . $frame['width'] . 'x' . $frame['height'] . ($engine !== '' ? ", $engine" : '') . "): $done rendered, $unchanged unchanged" . ($lines !== [] ? "\n" . implode("\n", $lines) : '');
 
     return ['ok' => !str_contains(implode("\n", $lines), 'FAIL'), 'message' => $message, 'warnings' => $warnings, 'rendered' => $done];
+}
+
+/**
+ * Writes preview pages of the frames (.cache/docs/frame-preview/<iso>-<id>.html) that load the live
+ * docs/frame/frame.css: open one in Chrome, edit frame.css, refresh. Nothing in docs/ is written.
+ *
+ * @param array<string, mixed> $ctx
+ * @param string[] $languages
+ * @param string[] $only screenshot ids (empty = all)
+ *
+ * @return array{ok: bool, message: string, files: string[]}
+ */
+function docs_preview_frames(array $ctx, array $languages, array $only = []): array
+{
+    $template = docs_frame_template($ctx);
+    if ($template['error'] !== '') {
+        return ['ok' => false, 'message' => $template['error'], 'files' => []];
+    }
+    $frame = docs_frame_config($ctx);
+    $dir = $ctx['repo'] . '/.cache/docs/frame-preview';
+    @mkdir($dir, 0775, true);
+    array_map('unlink', glob("$dir/*.html") ?: []);
+    $shots = array_values(array_filter((array) ($ctx['config']['screenshots'] ?? []), 'is_array'));
+    $files = [];
+    $skipped = [];
+    foreach ($languages as $iso) {
+        $local = docs_localize($ctx, $iso);
+        $list = array_values(array_filter($shots, static fn (array $s): bool => empty($s['languages']) || in_array($iso, (array) $s['languages'], true)));
+        foreach ($list as $n => $shot) {
+            $id = (string) ($shot['id'] ?? '');
+            if ($only !== [] && !in_array($id, $only, true)) {
+                continue;
+            }
+            $image = docs_screenshot_file($ctx, $iso, $id);
+            if ($image === null) {
+                $skipped[] = "$iso/$id";
+                continue;
+            }
+            $file = "$dir/$iso-$id.html";
+            file_put_contents($file, docs_frame_html($local, $iso, $shot, $image, docs_caption($local, $iso, $shot), $n + 1, count($list), $frame, $template, true));
+            $files[] = $file;
+        }
+    }
+    $message = 'Frame previews (' . count($files) . '): open one in Chrome or Edge, edit docs/frame/frame.css, refresh. After an edit of frame.html run this again. Real images: ps-module docs frames'
+        . ($files !== [] ? "\n  " . implode("\n  ", array_map('docs_file_url', $files)) : '')
+        . ($skipped !== [] ? "\n  no screenshot yet (ps-module docs screenshots): " . implode(' ', $skipped) : '');
+
+    return ['ok' => $files !== [], 'message' => $message, 'files' => $files];
 }
 
 /**

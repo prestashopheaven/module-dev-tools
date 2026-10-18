@@ -23,8 +23,9 @@
  *                                        screenshots in a Docker test shop (testing.json), per language
  *   ps-module docs manual [<iso>...] [--no-pdf]
  *                                        render docs/manual/<iso>/manual.html (+ PDF), also with open problems
- *   ps-module docs frames [<iso>...] [--only=<id,...>] [--force]
- *                                        put the screenshots in the frame of the module: docs/framed/<iso>/<id>.png
+ *   ps-module docs frames [<iso>...] [--only=<id,...>] [--force] [--preview]
+ *                                        put the screenshots in the frame template of the module (docs/frame/):
+ *                                        docs/framed/<iso>/<id>.png; --preview: pages to try template edits
  *   ps-module docs marketing [<iso>...]  render docs/marketing/<iso>/marketing.html, .md and .json
  *   ps-module docs build [--no-screenshots] [--screenshots] [--keep]
  *                                        definition of done: check + screenshots (when out of date) + framed
@@ -37,8 +38,9 @@
  *
  * Content (written by Claude): docs/content/<iso>/manual.md, docs/content/<iso>/marketing.json,
  * docs/content/<iso>/screenshots.json (captions on the frames), docs/docs.json > marketing (category, price,
- * benefits, multistore) and > frame (the style of the module's screenshot frame), docs/content/logo-suggestion.svg,
- * optionally docs/content/frame.css / frame.html (own frame CSS or template).
+ * benefits, multistore) and > frame (settings of the framed screenshots), docs/content/logo-suggestion.svg.
+ * The module's frame template: docs/frame/frame.html + frame.css (+ images/fonts), created once by init and
+ * then edited by hand only: no tool writes to docs/frame/.
  * Generated: docs/screenshots/<iso>/<id>.png, docs/framed/<iso>/<id>.png, docs/manual/<iso>/manual.html + readme_<iso>.pdf (the Addons name: ps-module build copies it to <module>/docs/),
  * docs/marketing/<iso>/marketing.{html,md,json}, docs/index.html, docs/build-manifest.json.
  */
@@ -53,7 +55,7 @@ require_once __DIR__ . '/docs-frames.php';
 
 const DOCS_RESOURCES = __DIR__ . '/../resources';
 const DOCS_TODO = '/\bTODO:/';
-const DOCS_FRAME_HELP = "The style of this module's screenshot frame. Every screenshot is rendered into it with its caption from docs/content/<iso>/screenshots.json printed on the frame: docs/framed/<iso>/<id>.png (Addons product images; the manuals use them too). style: name of the starting style (resources/docs/frame/styles.json); background: CSS colour or gradient behind the frame; frame: colour of the frame that carries the caption; text: caption colour (contrast with frame at least 4.5:1); accent: mark above the caption and counter; device: colour of phone/tablet bezels; width/height: image size in px (Addons: at least 1000x1000); caption: 'top'|'bottom' (portrait screenshots: next to the device); radius: corner radius in px. Optional: font (an installed font family), address (text in the browser address bar), logo (false: no module logo), counter (false: no '1 / 4'), manual (false: manuals use the raw screenshots), enabled (false: no frames), engines (['docker','chrome']). Own CSS: docs/content/frame.css; own template: docs/content/frame.html (start from resources/docs/frame/frame.html).";
+const DOCS_FRAME_HELP = "Settings of the framed screenshots. Every screenshot is rendered into the frame template of this module, docs/frame/frame.html + frame.css (the look: colours, fonts, device, layout; edited by hand, no tool changes it), with its caption from docs/content/<iso>/screenshots.json printed on the frame: docs/framed/<iso>/<id>.png (Addons product images; the manuals use them too). width/height: image size in px (Addons: at least 1000x1000); caption: 'top'|'bottom' (body class caption-top|bottom; portrait screenshots: next to the device). Optional: address (text in the browser address bar), logo (false: no module logo), counter (false: no '1 / 4'), manual (false: manuals use the raw screenshots), enabled (false: no frames), engines (['docker','chrome']). Try template edits: ps-module docs frames --preview.";
 const DOCS_RENDER_PLACEHOLDERS = ['version', 'display_name', 'module_name', 'ps_min', 'ps_tested', 'php_min', 'author'];
 
 if (PHP_SAPI === 'cli' && realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === realpath(__FILE__)) {
@@ -380,7 +382,7 @@ function docs_marketing_hashes(array $marketing): array
 }
 
 /**
- * Hash of all hand-written docs content: docs.json and everything in docs/content/.
+ * Hash of all hand-written docs content: docs.json, everything in docs/content/ and the frame template docs/frame/.
  *
  * @param array<string, mixed> $ctx
  */
@@ -1030,22 +1032,37 @@ function docs_cmd_init(array $ctx): int
         $created[] = docs_rel($ctx, $path);
     }
     $ctx['config'] = docs_read_json($ctx['docs'] . '/docs.json');
-    // The style of the screenshot frame: a starting style per module (by its name), adapted by Claude afterwards.
-    if (is_array($ctx['config']) && !isset($ctx['config']['frame'])) {
-        $config = [];
-        foreach ($ctx['config'] as $key => $value) {
-            $config[$key] = $value;
-            if ($key === 'screenshots') {
-                $config['frame'] = docs_frame_style_for($ctx['module']);
+    // The frame template of the module (docs/frame/): created once, then it belongs to the module.
+    if (is_array($ctx['config']) && (array) ($ctx['config']['screenshots'] ?? []) !== []) {
+        $templateFiles = docs_frame_create_template($ctx);
+        $created = array_merge($created, array_map(static fn (string $f): string => "$f (the frame template of this module: edit it by hand, no tool changes it)", $templateFiles));
+        $config = $ctx['config'];
+        $frameBlock = is_array($config['frame'] ?? null) ? $config['frame'] : null;
+        $changed = false;
+        if ($frameBlock === null) {
+            $config = [];
+            foreach ($ctx['config'] as $key => $value) {
+                $config[$key] = $value;
+                if ($key === 'screenshots') {
+                    $config['frame'] = ['width' => DOCS_FRAME_DEFAULTS['width'], 'height' => DOCS_FRAME_DEFAULTS['height'], 'caption' => DOCS_FRAME_DEFAULTS['caption']];
+                }
             }
+            $changed = true;
+            $created[] = 'docs/docs.json > frame (settings: width, height, caption)';
+        } elseif ($templateFiles !== [] && array_intersect(DOCS_FRAME_LEGACY, array_keys($frameBlock)) !== []) {
+            // The look moved from docs.json (1.7) into the new docs/frame/frame.css.
+            $config['frame'] = array_diff_key($frameBlock, array_flip(DOCS_FRAME_LEGACY));
+            $changed = true;
+            $created[] = 'docs/docs.json > frame (colours moved to docs/frame/frame.css)';
         }
-        $config['frame'] ??= docs_frame_style_for($ctx['module']);
-        if (is_array($config['_help'] ?? null) && !isset($config['_help']['frame'])) {
+        if (is_array($config['_help'] ?? null) && ($config['_help']['frame'] ?? '') !== DOCS_FRAME_HELP) {
             $config['_help']['frame'] = DOCS_FRAME_HELP;
+            $changed = true;
         }
-        docs_write_json($ctx['docs'] . '/docs.json', $config);
-        $ctx['config'] = $config;
-        $created[] = 'docs/docs.json > frame (starting style "' . $config['frame']['style'] . '": adapt the colours to the module)';
+        if ($changed) {
+            docs_write_json($ctx['docs'] . '/docs.json', $config);
+            $ctx['config'] = $config;
+        }
     }
     $captionsFile = docs_captions_file($ctx, $ctx['source']);
     if ((array) ($ctx['config']['screenshots'] ?? []) !== []) {
@@ -1135,7 +1152,7 @@ function docs_cmd_status(array $ctx, bool $json): int
         $frames = docs_frames_state($ctx);
         $frameConfig = docs_frame_config($ctx);
         echo '  framed screenshots  ' . ($frames['state'] === 'ok'
-            ? 'ok (' . $frameConfig['width'] . 'x' . $frameConfig['height'] . ', style ' . (string) ($frameConfig['style'] ?? 'custom') . ')'
+            ? 'ok (' . $frameConfig['width'] . 'x' . $frameConfig['height'] . ', template docs/frame/)'
             : 'missing: ' . implode(' ', array_slice($frames['missing'], 0, 8)) . (count($frames['missing']) > 8 ? ' ...' : '') . ' (run: ps-module docs frames)') . "\n";
     }
     echo '  generated output    ' . $outputs['message'] . "\n";
@@ -1259,7 +1276,13 @@ function docs_cmd_frames(array $ctx, array $languages, array $flags): int
             $only = array_values(array_filter(explode(',', substr($flag, 7))));
         }
     }
-    $issues = array_filter(docs_validate($ctx), static fn (array $i): bool => (in_array($i['lang'], $languages, true) && str_ends_with($i['file'], 'screenshots.json')) || ($i['lang'] === '*' && str_contains($i['message'], 'frame')));
+    if (in_array('--preview', $flags, true)) {
+        $preview = docs_preview_frames($ctx, $languages === $ctx['languages'] ? [$ctx['source']] : $languages, $only);
+        echo $preview['message'] . "\n";
+
+        return $preview['ok'] ? 0 : 1;
+    }
+    $issues = array_filter(docs_validate($ctx), static fn (array $i): bool => (in_array($i['lang'], $languages, true) && str_ends_with($i['file'], 'screenshots.json')) || ($i['lang'] === '*' && (str_contains($i['message'], 'frame') || str_starts_with($i['file'], 'docs/frame/'))));
     if ($issues !== []) {
         echo "Content problems (rendered anyway, 'docs build' refuses them):\n";
         docs_print_issues(array_values($issues));

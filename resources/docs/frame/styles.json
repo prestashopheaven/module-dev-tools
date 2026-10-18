@@ -1,5 +1,5 @@
 {
-  "_comment": "Starting styles for the screenshot frame. 'ps-module docs init' gives each module one of them (chosen by its name), written into docs/docs.json > frame; Claude then adapts it to the module (colours of the logo, the theme of the module). 'background' is any CSS background (colour or gradient); 'frame' is the box that carries the caption; 'text' must contrast with 'frame' (at least 4.5:1).",
+  "_comment": "Starting styles for the frame template of a module. 'ps-module docs init' writes one of them (chosen by the module name) into the colours of the module's own docs/frame/frame.css, once; after that the file belongs to the module and no tool changes it. 'background' is any CSS background (colour or gradient); 'frame' is the box that carries the caption; 'text' must contrast with 'frame' (at least 4.5:1).",
   "styles": [
     { "name": "ocean",    "background": "linear-gradient(135deg, #1f4fd1 0%, #0b1f5c 100%)", "frame": "#ffffff", "text": "#101828", "accent": "#1f4fd1", "device": "#111827" },
     { "name": "lagoon",   "background": "linear-gradient(135deg, #0f766e 0%, #064e3b 100%)", "frame": "#ffffff", "text": "#0b2a26", "accent": "#0f766e", "device": "#0b1513" },

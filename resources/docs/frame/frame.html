@@ -1,17 +1,25 @@
 <!doctype html>
 <!--
-  Frame template of ps-module docs: every screenshot of a module is rendered into this page
-  (docs/framed/<iso>/<id>.png). A module may replace it with docs/content/frame.html; keep the
-  placeholders below. Values are HTML-escaped except {{css}}, {{image}}, {{text_html}} and {{logo_html}}.
+  Frame template of this module: every screenshot is rendered into this page, one image per screenshot
+  and language (docs/framed/<iso>/<id>.png). The look is in frame.css next to this file.
 
-  {{lang}} {{dir}}            language and writing direction
-  {{css}}                     frame.css + the style of docs.json > frame + docs/content/frame.css
+  THIS FILE IS YOURS. 'ps-module docs init' created it once and no tool changes it afterwards.
+  Change the markup as you like, but keep {{css}}, {{image}} and {{title}}, and the script at the end
+  (it scales the screenshot and must set document.body.dataset.ready = '1').
+  Images next to this file can be used with src="name.png"; they are embedded when rendering.
+
+  Placeholders (HTML-escaped, except {{css}}, {{image}}, {{text_html}} and {{logo_html}}):
+  {{lang}} {{dir}}            language and writing direction (ltr | rtl)
+  {{css}}                     the variables set by ps-module + frame.css
   {{title}} {{text_html}}     the caption of docs/content/<iso>/screenshots.json (text_html may be empty)
-  {{image}}                   the screenshot (data: URI)
+  {{image}}                   the screenshot
   {{device}}                  desktop | tablet | mobile | element (clipped to a selector) | custom
-  {{layout}}                  landscape | portrait (caption next to the device)
+  {{layout}}                  landscape | portrait (phone or tablet upright)
+  {{caption}}                 top | bottom (docs/docs.json > frame.caption)
   {{area}}                    bo | fo
-  {{display_name}} {{logo_html}} {{number}} {{count}} {{address}} {{id}}
+  {{display_name}}            module name in the language;  {{logo_html}}  the module logo (or empty)
+  {{number}} {{count}}        "1" and "4" of 4 screenshots (empty with frame.counter = false)
+  {{address}} {{id}}          docs.json > frame.address; the screenshot id
 -->
 <html lang="{{lang}}" dir="{{dir}}">
 <head>
@@ -21,7 +29,7 @@
 {{css}}
 </style>
 </head>
-<body class="device-{{device}} layout-{{layout}} area-{{area}}">
+<body class="device-{{device}} layout-{{layout}} area-{{area}} caption-{{caption}}">
 <main class="canvas">
   <section class="frame">
     <header class="caption">

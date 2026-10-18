@@ -96,13 +96,20 @@ gedrukt, de screenshot in een browservenster, telefoon of tablet, en onderaan lo
 Resultaat: `docs/framed/<iso>/<id>.png` (standaard 1600 x 1200, de productafbeeldingen voor Addons). De
 handleidingen, de marketingbladen en `docs/index.html` gebruiken ze ook.
 
-- Sjabloon (voor alle modules gelijk): `resources/docs/frame/frame.html` + `frame.css`.
-- Stijl per module: `docs/docs.json > frame` (`background`, `frame`, `text`, `accent`, `device`, `width`,
-  `height`, `caption` top/bottom, `radius`; optioneel `font`, `address`, `logo`, `counter`, `manual`,
-  `enabled`, `engines`). `docs init` geeft elke module een beginstijl uit `resources/docs/frame/styles.json`
-  (gekozen op de modulenaam); Claude past die aan op de module. De tekst moet minstens 4.5:1 contrast
-  hebben met het frame.
-- Eigen CSS: `docs/content/frame.css`; een volledig eigen sjabloon: `docs/content/frame.html`.
+- **Sjabloon per module: `docs/frame/frame.html` + `frame.css`** (plus eigen afbeeldingen en fonts in
+  `docs/frame/`, gebruikt met `url("x.png")` / `src="x.png"`; bij het renderen ingebed). `docs init` maakt
+  het één keer aan uit `resources/docs/frame/` met een beginstijl uit `styles.json` (gekozen op de
+  modulenaam). Daarna is het van de module: je past het met de hand aan, geen enkele tool schrijft nog in
+  `docs/frame/`, en elke `docs build` / `docs frames` gebruikt het. Een nieuwere library verandert een
+  bestaand sjabloon dus ook niet.
+- Uitproberen: `ps-module docs frames --preview [<iso>] [--only=<id>]` schrijft pagina's in
+  `.cache/docs/frame-preview/` die de echte `frame.css` laden: open er een in Chrome, pas `frame.css` aan,
+  ververs. De echte afbeeldingen: `ps-module docs frames`.
+- Instellingen in `docs/docs.json > frame`: `width`, `height`, `caption` (top/bottom, als body-class
+  `caption-top|bottom`), optioneel `address`, `logo`, `counter`, `manual`, `enabled`, `engines`.
+- Controle: het sjabloon heeft `{{css}}`, `{{image}}`, `{{title}}` en het script dat `dataset.ready` zet;
+  geen externe bestanden; afbeeldingen moeten in `docs/frame/` staan; waarschuwing als `--text` op
+  `--frame` minder dan 4.5:1 contrast heeft. Een wijziging aan het sjabloon maakt de docs-stempel ongeldig.
 - Bijschriften: `docs/content/<iso>/screenshots.json`, `{"<id>": {"title": "..", "text": ".."}}`, vertaald
   zoals de handleiding (`docs mark-translated <iso> screenshots`).
 - Rendert in de docs-tools-image, anders met een lokale Chrome/Edge; alleen wat veranderd is

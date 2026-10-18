@@ -1,20 +1,35 @@
 /*
- * Base style of the screenshot frame (frame.html). The module's own style comes after it:
- * the variables from docs/docs.json > frame (:root below is overwritten), then docs/content/frame.css.
+ * Frame of %%module%%: the look of every framed screenshot (docs/framed/<iso>/<id>.png).
+ *
+ * THIS FILE IS YOURS. 'ps-module docs init' created it once (starting style "%%style%%") and no tool
+ * changes it afterwards: every 'ps-module docs build' / 'docs frames' renders the screenshots with it.
+ * Change anything: colours, sizes, the device around the screenshot, the caption, the footer.
+ *
+ * Set by ps-module for each image (before this file, so you can override them):
+ *   --canvas-w, --canvas-h   image size (docs/docs.json > frame width / height)
+ *   --title-size             caption title size (smaller for long titles)
+ *   --lang-fonts             fonts for the script of the language (CJK, Arabic, Thai, ...)
+ * Classes on <body>: device-desktop|tablet|mobile|element|custom, layout-landscape|portrait (portrait:
+ * phone or tablet upright, the caption next to the device), area-bo|fo, caption-top|bottom
+ * (docs.json > frame.caption). <html> has lang="<iso>" and dir="rtl" for right-to-left languages.
+ *
+ * Images and fonts: put them in docs/frame/ next to this file and use url("background.png") or
+ * @font-face { src: url("fonts/MyFont.woff2"); }. They are embedded when the frames are rendered.
+ * No external files (http..., @import): the frames are rendered offline.
+ *
+ * Try changes: ps-module docs frames --preview (open the printed file in Chrome, edit, refresh), then
+ * ps-module docs frames (or docs build) for the real images.
  */
 :root {
-    --canvas-w: 1600px;
-    --canvas-h: 1200px;
-    --bg: linear-gradient(135deg, #1f4fd1 0%, #0b1f5c 100%);
-    --frame: #ffffff;
-    --text: #101828;
-    --accent: #1f4fd1;
+    --bg: %%background%%;
+    --frame: %%frame%%;
+    --text: %%text%%; /* the caption on the frame: contrast with --frame at least 4.5:1 */
+    --accent: %%accent%%;
+    --device: %%device%%;
     --radius: 28px;
-    --font: "Noto Sans", "Segoe UI", Arial, sans-serif;
-    --title-size: 54px;
+    --font: var(--lang-fonts); /* own font first, e.g. "Inter", var(--lang-fonts) */
     --text-size: 26px;
     --pad: 56px;
-    --device: #111827;
 }
 
 * { box-sizing: border-box; }
@@ -70,7 +85,12 @@ body {
     margin: 30px 0 18px;
 }
 
-/* The device around the screenshot. */
+/* Caption under the screenshot (docs.json > frame.caption = "bottom"). */
+.caption-bottom.layout-landscape .caption { order: 2; margin: 4px 0 22px; }
+.caption-bottom.layout-landscape .stage { order: 1; margin: 6px 0 26px; }
+.caption-bottom.layout-landscape .brand { order: 3; }
+
+/* The device around the screenshot (the screenshot is scaled to fit by the script in frame.html). */
 .device { margin: 0; display: flex; flex-direction: column; background: #fff; overflow: hidden; }
 .screen { line-height: 0; }
 .shot { display: block; width: 1px; height: 1px; }
@@ -135,6 +155,7 @@ body {
 .layout-portrait .stage { flex: 1 1 0; height: calc(100% - 52px); margin: 0; }
 .layout-portrait .brand { flex: 0 0 100%; }
 
+/* Footer: module logo, name and "1 / 4". */
 .brand {
     flex: none;
     display: flex;
