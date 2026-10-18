@@ -31,7 +31,8 @@ $moduleDir = $fromZip ? extractZip($target) : rtrim(str_replace('\\', '/', (stri
 $name = basename($moduleDir);
 
 $report = new Report();
-$skipDirs = $fromZip ? [] : ['vendor', 'tests', 'node_modules', '.cache', 'dist'];
+// _dev/ (TypeScript sources and their tooling) is not part of the package: ps-module build leaves it out.
+$skipDirs = $fromZip ? [] : ['vendor', 'tests', 'node_modules', '.cache', 'dist', '_dev'];
 
 checkIdentity($moduleDir, $name, $rules, $report);
 checkDistribution($moduleDir, $report, $fromZip);

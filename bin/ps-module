@@ -18,9 +18,12 @@
  * Run inside the module directory (composer scripts do that automatically).
  *
  *   ps-module verify                 the full definition of done, in order, stops at the first failure:
- *                                    check, validate, docs build, build, validate-zip, shops run, validator-api
+ *                                    (assets check,) check, validate, docs build, build, validate-zip, shops run, validator-api
+ *   ps-module assets [status|check|build]
+ *                                    TypeScript in _dev/ (recipe typescript): build = npm ci + npm run build (typecheck,
+ *                                    lint, bundle to views/js/); check = built JS matches the sources (no Node needed) + stamp
  *   ps-module check                  composer "checks" (lint, cs, phpstan, compat, conventions, tests) + stamp
- *   ps-module conventions            docblocks on everything + clean main class (DOC-01, MOD-01)
+ *   ps-module conventions            docblocks, clean main class, DDD + CQRS architecture (DOC-01, MOD-01, ARCH)
  *   ps-module phpstan [<ps-version>...]
  *   ps-module validate [<dir|zip>]   validator pre-check of the source (default) or a zip
  *   ps-module build                  ../dist/<module>.zip (no-dev vendor, scoped, index.php everywhere)
@@ -60,6 +63,10 @@ switch ($command) {
             echo "ps-module: 'check' passed and is recorded for the current code.\n";
         }
         exit($code);
+
+    case 'assets':
+        requireModule($moduleDir);
+        exit(script('assets.php', array_merge([(string) $moduleDir], $args)));
 
     case 'conventions':
         exit(script('conventions-check.php', array_merge([(string) ($moduleDir ?? getcwd())], $args)));
@@ -189,6 +196,10 @@ switch ($command) {
             'check' => ['self', ['check']],
             'validate-src' => ['self', ['validate']],
         ];
+        // TypeScript (recipe typescript): the committed views/js must be the build of _dev/ before anything is checked.
+        if (in_array('assets', $required, true)) {
+            $steps = ['assets' => ['self', ['assets', 'check']]] + $steps;
+        }
         // Docs before the build: the release zip ships the manuals (docs/readme_<iso>.pdf).
         if (in_array('docs', $required, true)) {
             $steps['docs'] = ['self', ['docs', 'build']];
@@ -270,7 +281,8 @@ function addIndexFiles(string $moduleDir): int
 
         return 1;
     }
-    $skip = ['vendor', '.cache', 'node_modules', '.git', '.idea', 'dist'];
+    // _dev/ holds TypeScript sources that never ship (ps-module build leaves it out).
+    $skip = ['vendor', '.cache', 'node_modules', '.git', '.idea', 'dist', '_dev'];
     $root = str_replace('\\', '/', (string) realpath($moduleDir)) . '/';
     // A directory whose real path lies outside the module is a symlink or junction: skip it.
     $inside = static fn (string $path): bool => str_starts_with(str_replace('\\', '/', (string) realpath($path)) . '/', $root);

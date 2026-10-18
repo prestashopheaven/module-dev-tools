@@ -6,6 +6,8 @@
  *           has a docblock with a description (not only @tags).
  *   MOD-01  The main module file contains a clean class: only trait `use` lines and
  *           the constructor. Everything else lives in traits under src/Module/.
+ *   ARCH    DDD + CQRS: layers and their dependencies, commands, queries and handlers and their
+ *           registration (architecture-check.php, conventions ARCH-01..15).
  *
  * Usage: php conventions-check.php <module-dir> [--with-tests]
  *   Skips vendor/, node_modules/, .cache/, index.php files and (unless --with-tests) tests/.
@@ -14,6 +16,8 @@
  */
 
 declare(strict_types=1);
+
+require_once __DIR__ . '/architecture-check.php';
 
 $args = array_slice($argv, 1);
 $withTests = in_array('--with-tests', $args, true);
@@ -64,11 +68,19 @@ foreach ($files as $path) {
     }
 }
 
+$srcFiles = array_values(array_filter($files, static fn (string $p): bool => !str_starts_with(substr($p, strlen($moduleDir) + 1), 'tests/')));
+foreach (checkArchitecture($moduleDir, $srcFiles) as $violation) {
+    $violations[] = $violation;
+}
+
 if ($violations === []) {
-    echo "Conventions check OK (" . count($files) . " files: docblocks, clean main class).\n";
+    echo "Conventions check OK (" . count($files) . " files: docblocks, clean main class, DDD + CQRS architecture).\n";
     exit(0);
 }
 echo "Conventions check found " . count($violations) . " problem(s):\n  " . implode("\n  ", $violations) . "\n";
+if (preg_grep('/ ARCH-/', $violations) !== []) {
+    echo "Architecture (DDD + CQRS): see conventions ARCH-01..15 and .claude/skills/ps-module/architecture.md.\n";
+}
 exit(1);
 
 // ---------------------------------------------------------------------------

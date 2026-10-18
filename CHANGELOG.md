@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.9.0] - 2026-10-18
+
+### Toegevoegd
+- Architectuurcontrole DDD + CQRS in `ps-module conventions` (`src/architecture-check.php`, conventies
+  ARCH-01..15): de lagen in `src/` (Domain, Application, Infrastructure, presentatie), wie wat mag gebruiken
+  (geen PrestaShop in Domain/Application, geen `\Db`/`\Configuration`/repositories in hooks en controllers),
+  commands/queries/results final en immutable, handlers met één `handle()`, query-handlers schrijven niet, elke
+  handler geregistreerd in `config/*.yml` en elke tag geldig, de bus aanwezig, en een unit-test per handler.
+  Alleen voor modules (niet voor de libraries).
+- `ps-module assets build|check|status`: TypeScript/npm-build in `<module>/_dev/` (esbuild), met een
+  versheidscontrole (hash van bronnen en uitvoer) die ook zonder Node werkt; DoD-stap `assets` als de module
+  `_dev/package.json` heeft; `verify` draait eerst `assets check`.
+
+### Gewijzigd
+- PHPStan draait per PrestaShop-versie met een eigen resultaatcache (`.cache/phpstan/<versie>`): voorheen hergebruikte
+  de tweede versie de resultaten van de eerste voor ongewijzigde bestanden.
+- Release-zip laat ook TypeScript- en build-configuratie weg (`*.ts`, `*.map`, `tsconfig*.json`, `build.mjs`,
+  eslint/prettier-config, lockfiles van yarn/pnpm); `validate` en `index` slaan `_dev/` over.
+
 ## [1.8.0] - 2026-10-18
 
 ### Gewijzigd

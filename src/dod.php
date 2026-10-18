@@ -10,7 +10,8 @@
  * Used through `vendor/bin/ps-module status|skip|fingerprint` and by the tools that
  * stamp a step when it passes. There is deliberately no command to stamp by hand.
  *
- * Steps: check, validate-src, validate-zip, shop-tests (if testing.json exists),
+ * Steps: assets (if <module>/_dev/package.json exists: TypeScript built into views/js),
+ *        check, validate-src, validate-zip, shop-tests (if testing.json exists),
  *        validator-api (if PRESTASHOP_VALIDATOR_API_KEY is configured).
  *
  * Also used by the Stop hook of the PrestaShopHeaven project (.claude/hooks/).
@@ -156,6 +157,11 @@ function dod_last_change(string $repoDir): int
 function dod_required_steps(string $repoDir): array
 {
     $steps = ['check', 'validate-src', 'validate-zip'];
+    // TypeScript sources (recipe typescript): the committed views/js must match them (ps-module assets).
+    $moduleDir = dod_module_dir($repoDir);
+    if ($moduleDir !== null && is_file("$moduleDir/_dev/package.json")) {
+        array_unshift($steps, 'assets');
+    }
     if (is_file("$repoDir/testing.json")) {
         $steps[] = 'shop-tests';
     }
@@ -264,6 +270,7 @@ function dod_status(string $repoDir): array
 function dod_command(string $step, string $module): string
 {
     $command = [
+        'assets' => 'vendor/bin/ps-module assets build',
         'check' => 'composer check',
         'validate-src' => 'vendor/bin/ps-module validate',
         'validate-zip' => 'vendor/bin/ps-module build && vendor/bin/ps-module validate-zip',

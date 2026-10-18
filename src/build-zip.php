@@ -29,6 +29,10 @@ const EXCLUDE = [
         '.gitignore', '.gitattributes', '.editorconfig', '.DS_Store', 'Thumbs.db', '*.log', '*.zip', 'Makefile',
         'package.json', 'package-lock.json', 'tsconfig.json', 'webpack.config.js', '.env*', '.license-header.txt',
         'config.xml', 'config_*.xml',
+        // JS tooling outside _dev/ (recipe typescript keeps it in _dev/, which is left out as a whole):
+        // TypeScript sources, source maps and the configs of npm, TypeScript, esbuild, ESLint, Prettier.
+        '*.ts', '*.map', 'tsconfig*.json', 'esbuild.config.*', 'build.mjs', 'eslint.config.*', '.eslintrc*', '.prettierrc*',
+        '.nvmrc', '.npmrc', 'yarn.lock', 'pnpm-lock.yaml',
     ],
 ];
 

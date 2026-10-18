@@ -7,7 +7,7 @@ Ontwikkeltools voor PrestaShopHeaven-modules. Installeer als `require-dev`; alle
 |---|---|
 | `ps-module verify` | De volledige definition of done, in volgorde; stopt bij de eerste fout |
 | `ps-module check` | `composer checks` (lint, cs, PHPStan, compat, conventies, tests) + stempel |
-| `ps-module conventions` | Docblocks overal + schone hoofdklasse (DOC-01, MOD-01) |
+| `ps-module conventions` | Docblocks overal + schone hoofdklasse (DOC-01, MOD-01) + de DDD/CQRS-architectuur (ARCH-01..15: lagen, afhankelijkheden, commands/queries/handlers, registratie, unit-test per handler) |
 | `ps-module phpstan [versies]` | PHPStan tegen elke PS-versie uit `tests/phpstan/config.json` |
 | `ps-module validate [dir\|zip]` | Validator-precheck (regels live van validator.prestashop.com) |
 | `ps-module build` | `../dist/<module>.zip`: no-dev vendor, gescopete packages, `index.php` overal |
@@ -21,6 +21,7 @@ Ontwikkeltools voor PrestaShopHeaven-modules. Installeer als `require-dev`; alle
 | `ps-module docs <cmd>` | Handleidingen (HTML + PDF), marketingteksten (Addons) en screenshots per taal in `<repo>/docs/`: `init`, `status`, `check`, `screenshots`, `frames`, `manual`, `marketing`, `build`, `mark-translated`, `preview`, `doctor` |
 | `ps-module status` | Welke stappen op de huidige code geslaagd zijn |
 | `ps-module skip <stap> "<reden>"` | Stap die echt niet kan draaien (wordt gemeld) |
+| `ps-module assets [status\|check\|build]` | TypeScript in `<module>/_dev/` (recept `typescript`): `build` = `npm ci` + `npm run build` (typecheck, lint, esbuild naar `views/js/`), `check` = gebouwde JS hoort bij de bronnen (zonder Node) + stempel |
 
 Geslaagde stappen leggen een stempel vast in `<repo>/.cache/dod/` met een vingerafdruk van de
 broncode. De Stop-hook van het project `C:/_GIT/_PrestaShopHeaven/MODULES` gebruikt die om de
@@ -42,6 +43,23 @@ definition of done af te dwingen. Een stempel met de hand zetten kan bewust niet
 en zet die prefix voor de genoemde namespaces, in de module-code en in `vendor/`. Daarna draait
 `composer dump-autoload`. Zo laadt elke module zijn eigen versie van gedeelde packages.
 `ps-module shops run` installeert ook de echte zip in de testwinkels.
+
+## TypeScript (`ps-module assets`)
+
+Alleen voor modules met `<module>/_dev/package.json` (recept `typescript` van de skill); anders doet het niets.
+De bronnen staan in `_dev/` (zoals bij de modules van PrestaShop zelf), `_dev/build.mjs` bouwt elke entry
+`_dev/front/*.ts` en `_dev/back/*.ts` met esbuild naar een leesbare `views/js/<entry>.js` met de licentieheader.
+Die uitvoer staat in git, zodat de module zonder Node vanuit git werkt.
+
+- `assets build`: `npm install` (zonder lock) of `npm ci` (lock nieuwer dan `node_modules`), dan `npm run build`:
+  typecheck (`tsc`), lint (ESLint), bundel, `_dev/build-manifest.json`. Vereist Node.js 20.19+ en npm; zonder Node
+  stopt het met een melding en de tip `ps-module skip assets "<reden>"`.
+- `assets check`: vergelijkt `_dev/build-manifest.json` (hash van alle bronnen in `_dev/` zonder `node_modules`, plus
+  `.license-header.txt`, en een hash per uitvoerbestand; CRLF telt als LF) met de bestanden, in PHP. Gewijzigde
+  TypeScript zonder nieuwe build of een met de hand bewerkte `views/js` geeft exit 1. Zit in `composer check`
+  (`@assets`) en is de DoD-stap `assets`; `ps-module verify` draait hem als eerste.
+- `ps-module build` laat `_dev/`, `node_modules/`, `package*.json`, `*.ts`, `tsconfig*` en build-configs uit de zip;
+  `ps-module validate` en `ps-module index` slaan `_dev/` over.
 
 ## Vertalingen (`ps-module translations`)
 

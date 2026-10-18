@@ -61,8 +61,14 @@ foreach ($runs as $label => $root) {
         fwrite(STDERR, "vendor/bin/phpstan not found; run composer install.\n");
         exit(1);
     }
+    // Own result cache per PrestaShop version: with one shared tmpDir the second run reused the results of
+    // the first for unchanged files, so the PS 9 run was not independent of the PS 8 run.
+    $tmpDir = $moduleDir . '/.cache/phpstan/' . preg_replace('/[^A-Za-z0-9._-]/', '_', (string) $label);
+    @mkdir($tmpDir, 0775, true);
+    $wrapper = $moduleDir . '/.cache/phpstan/' . preg_replace('/[^A-Za-z0-9._-]/', '_', (string) $label) . '.neon';
+    file_put_contents($wrapper, "includes:\n    - " . str_replace('\\', '/', $neon) . "\nparameters:\n    tmpDir: " . str_replace('\\', '/', $tmpDir) . "\n");
     $cmd = escapeshellarg(PHP_BINARY) . ' -d memory_limit=2G ' . escapeshellarg($phpstan)
-        . ' analyse --no-progress --configuration=' . escapeshellarg($neon)
+        . ' analyse --no-progress --configuration=' . escapeshellarg($wrapper)
         . ' ' . implode(' ', array_map('escapeshellarg', $paths));
     passthru($cmd, $code);
     if ($code !== 0) {
