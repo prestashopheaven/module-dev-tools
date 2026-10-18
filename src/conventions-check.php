@@ -6,6 +6,7 @@
  *           has a docblock with a description (not only @tags).
  *   MOD-01  The main module file contains a clean class: only trait `use` lines and
  *           the constructor. Everything else lives in traits under src/Module/.
+ *   TST     every class, method and thrown exception tested (test-check.php, conventions TST-04..07).
  *   ARCH    DDD + CQRS: layers and their dependencies, commands, queries and handlers and their
  *           registration (architecture-check.php, conventions ARCH-01..15).
  *
@@ -18,6 +19,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/architecture-check.php';
+require_once __DIR__ . '/test-check.php';
 
 $args = array_slice($argv, 1);
 $withTests = in_array('--with-tests', $args, true);
@@ -72,12 +74,19 @@ $srcFiles = array_values(array_filter($files, static fn (string $p): bool => !st
 foreach (checkArchitecture($moduleDir, $srcFiles) as $violation) {
     $violations[] = $violation;
 }
+foreach (checkTests($moduleDir) as $violation) {
+    $violations[] = $violation;
+}
 
 if ($violations === []) {
-    echo "Conventions check OK (" . count($files) . " files: docblocks, clean main class, DDD + CQRS architecture).\n";
+    echo "Conventions check OK (" . count($files) . " files: docblocks, clean main class, DDD + CQRS architecture, tests).\n";
     exit(0);
 }
 echo "Conventions check found " . count($violations) . " problem(s):\n  " . implode("\n  ", $violations) . "\n";
+if (preg_grep('/ TST-/', $violations) !== []) {
+    echo "Tests (TST-04..08): every class and method tested, every fault case expected; see conventions TST.
+";
+}
 if (preg_grep('/ ARCH-/', $violations) !== []) {
     echo "Architecture (DDD + CQRS): see conventions ARCH-01..15 and .claude/skills/ps-module/architecture.md.\n";
 }

@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.10.0] - 2026-10-19
+
+### Toegevoegd
+- Testcontrole in `ps-module conventions` (`src/test-check.php`, conventies TST-04..07): elke klasse, trait en enum in
+  `src/`, `controllers/` en `classes/` heeft een eigen gespiegeld testbestand, elke publieke/protected methode wordt
+  erin aangeroepen, elke exception die de klasse gooit wordt verwacht (`expectException`), en elke command/query wordt in
+  een integratietest gedispatcht. Alleen voor modules.
+- `ps-module coverage` (TST-08): de unit-tests voeren elke regel van `src/Domain`, `src/Application` en
+  `src/Presenter` uit (PCOV of Xdebug, Clover). Draait ook in `ps-module check`.
+- JavaScript/TypeScript-tests (TST-20..26): `ps-module assets` draait lint, typecheck, Vitest met 100 % dekking per
+  bestand en de build; `assets check` faalt bij gewijzigde bronnen, tests of `views/js`, en bij JS zonder `_dev/`-tests.
+  De DoD-stap `assets` geldt voor elke module met eigen JS. Node 22.13+.
+
+### Gewijzigd
+- `ps-module phpstan` analyseert standaard ook `tests/Unit` en `tests/Integration`.
+
 ## [1.9.0] - 2026-10-18
 
 ### Toegevoegd

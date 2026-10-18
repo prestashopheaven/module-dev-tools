@@ -20,9 +20,11 @@
  *   ps-module verify                 the full definition of done, in order, stops at the first failure:
  *                                    (assets check,) check, validate, docs build, build, validate-zip, shops run, validator-api
  *   ps-module assets [status|check|build]
- *                                    TypeScript in _dev/ (recipe typescript): build = npm ci + npm run build (typecheck,
- *                                    lint, bundle to views/js/); check = built JS matches the sources (no Node needed) + stamp
+ *                                    JavaScript of the module (_dev/, views/js): build = npm ci + npm run build (typecheck,
+ *                                    lint, tests with 100% coverage, TypeScript bundle); check = sources, tests and views/js
+ *                                    match the last passing run (no Node needed) + stamp; fails for untested views/js
  *   ps-module check                  composer "checks" (lint, cs, phpstan, compat, conventions, tests) + stamp
+ *   ps-module coverage               unit tests execute every line of src/Domain, Application, Presenter (TST-08)
  *   ps-module conventions            docblocks, clean main class, DDD + CQRS architecture (DOC-01, MOD-01, ARCH)
  *   ps-module phpstan [<ps-version>...]
  *   ps-module validate [<dir|zip>]   validator pre-check of the source (default) or a zip
@@ -58,11 +60,19 @@ switch ($command) {
     case 'check':
         requireModule($moduleDir);
         $code = run('composer run-script checks', $moduleDir);
+        if ($code === 0) {
+            // TST-08: the unit tests execute every line of Domain, Application and Presenter.
+            $code = script('coverage.php', [$moduleDir]);
+        }
         if ($code === 0 && $repoDir !== null) {
             dod_stamp($repoDir, 'check');
             echo "ps-module: 'check' passed and is recorded for the current code.\n";
         }
         exit($code);
+
+    case 'coverage':
+        requireModule($moduleDir);
+        exit(script('coverage.php', [$moduleDir]));
 
     case 'assets':
         requireModule($moduleDir);

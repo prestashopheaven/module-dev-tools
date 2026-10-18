@@ -42,7 +42,8 @@ if (getenv('_PS_ROOT_DIR_')) {
 }
 
 $paths = array_filter(
-    $config['paths'] ?? [basename($moduleDir) . '.php', 'src', 'controllers', 'classes', 'upgrade', 'override'],
+    // tests/Unit and tests/Integration too: the tests are code as well (TST-04..12); Behat has its own vendor/.
+    $config['paths'] ?? [basename($moduleDir) . '.php', 'src', 'controllers', 'classes', 'upgrade', 'override', 'tests/Unit', 'tests/Integration'],
     static fn (string $path): bool => file_exists($moduleDir . '/' . $path)
 );
 

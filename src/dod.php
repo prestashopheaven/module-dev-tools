@@ -10,7 +10,7 @@
  * Used through `vendor/bin/ps-module status|skip|fingerprint` and by the tools that
  * stamp a step when it passes. There is deliberately no command to stamp by hand.
  *
- * Steps: assets (if <module>/_dev/package.json exists: TypeScript built into views/js),
+ * Steps: assets (if <module>/_dev/package.json or JavaScript in views/js exists: tested, TypeScript built),
  *        check, validate-src, validate-zip, shop-tests (if testing.json exists),
  *        validator-api (if PRESTASHOP_VALIDATOR_API_KEY is configured).
  *
@@ -149,6 +149,30 @@ function dod_last_change(string $repoDir): int
 }
 
 /**
+ * JavaScript files of the module in views/js/ (recursive), relative to the module directory and sorted:
+ * every one of them must be tested (ps-module assets, TST-20..29).
+ *
+ * @return string[]
+ */
+function dod_module_scripts(string $moduleDir): array
+{
+    $dir = "$moduleDir/views/js";
+    if (!is_dir($dir)) {
+        return [];
+    }
+    $files = [];
+    $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS));
+    foreach ($it as $file) {
+        if (strtolower($file->getExtension()) === 'js') {
+            $files[] = substr(str_replace('\\', '/', $file->getPathname()), strlen($moduleDir) + 1);
+        }
+    }
+    sort($files, SORT_STRING);
+
+    return $files;
+}
+
+/**
  * Steps the definition of done needs for this repository: shop tests only with testing.json, docs only with docs/docs.json,
  * the online validator only with an API key.
  *
@@ -157,9 +181,9 @@ function dod_last_change(string $repoDir): int
 function dod_required_steps(string $repoDir): array
 {
     $steps = ['check', 'validate-src', 'validate-zip'];
-    // TypeScript sources (recipe typescript): the committed views/js must match them (ps-module assets).
+    // JavaScript of the module (tests with 100% coverage; TypeScript built into views/js): ps-module assets.
     $moduleDir = dod_module_dir($repoDir);
-    if ($moduleDir !== null && is_file("$moduleDir/_dev/package.json")) {
+    if ($moduleDir !== null && (is_file("$moduleDir/_dev/package.json") || dod_module_scripts($moduleDir) !== [])) {
         array_unshift($steps, 'assets');
     }
     if (is_file("$repoDir/testing.json")) {
