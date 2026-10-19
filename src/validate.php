@@ -177,7 +177,8 @@ function extractZip(string $zipFile): string
 }
 
 /**
- * All files below $root (relative paths), skipping the given directories.
+ * All files below $root (relative paths), skipping the given top-level directories (vendor/ of Composer, not
+ * views/js/vendor/).
  *
  * @param string[] $skipDirs
  *
@@ -189,7 +190,7 @@ function listFiles(string $root, array $skipDirs): array
     $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS));
     foreach ($it as $item) {
         $relative = substr(str_replace('\\', '/', $item->getPathname()), strlen($root) + 1);
-        if (array_intersect(explode('/', dirname($relative)), $skipDirs)) {
+        if (str_contains($relative, '/') && in_array(explode('/', $relative)[0], $skipDirs, true)) {
             continue;
         }
         $files[] = $relative;
@@ -321,7 +322,7 @@ function checkStructure(string $dir, array $rules, Report $r, array $skipDirs, b
     foreach ($it as $item) {
         if ($item->isDir()) {
             $relative = substr(str_replace('\\', '/', $item->getPathname()), strlen($dir) + 1);
-            if (!array_intersect(explode('/', $relative), $skipDirs)) {
+            if (!in_array(explode('/', $relative)[0], $skipDirs, true)) {
                 $dirs[] = $relative;
             }
         }
@@ -345,11 +346,14 @@ function checkStructure(string $dir, array $rules, Report $r, array $skipDirs, b
         if (preg_match('#^config_[a-z]{2}\.xml$#', basename($file))) {
             $r->warning('structure', 'Do not ship generated config_xx.xml files.', $file);
         }
-        if (in_array(basename($file), array_keys($rules['Libraries defined in PS']), true)) {
-            $r->warning('structure', 'This library is already shipped with PrestaShop; use the core one.', $file);
+        // Exact file name only, and only the libraries marked "included" (tested against the online validator
+        // 2026-10-19: jquery.fancybox.js is an error, jquery.fancybox.min.js and html2canvas.js are not reported).
+        $library = $rules['Libraries defined in PS'][basename($file)] ?? null;
+        if (is_array($library) && ($library['included'] ?? true)) {
+            $r->error('structure', ($library['name'] ?? basename($file)) . ' library is already part of PrestaShop: use the core one.', $file);
         }
-        if (str_starts_with($file, 'vendor/')) {
-            continue;
+        if (isLibraryPath($file)) {
+            continue; // lib/, libs/, vendor/, vendors/: the online validator skips the structure check there
         }
         foreach ($rules['Structure']['Expected structure']['App\\Classes\\Entity\\ModuleValidation'] as $pattern => $spec) {
             if (!in_array($ext, $spec['extensions'], true)) {
@@ -360,7 +364,12 @@ function checkStructure(string $dir, array $rules, Report $r, array $skipDirs, b
                 continue;
             }
             if (!preg_match('#^' . $pattern . '/#', $path) && !($ext === 'png' && dirname($file) === '.')) {
-                $r->warning('structure', "{$spec['name']} belong in $pattern/.", $file);
+                // JavaScript elsewhere is an error online ("JavaScripts should be placed in /views/js").
+                if ($ext === 'js') {
+                    $r->error('structure', "{$spec['name']} should be placed in $pattern (third-party code: a lib/, libs/, vendor/ or vendors/ folder).", $file);
+                } else {
+                    $r->warning('structure', "{$spec['name']} belong in $pattern/.", $file);
+                }
             }
         }
     }
@@ -378,6 +387,16 @@ function checkFile(string $root, string $file, array $rules, Report $r): void
         return;
     }
     $content = (string) file_get_contents("$root/$file");
+
+    // Third-party code in a lib/, libs/, vendor/ or vendors/ folder: the online validator skips the license
+    // header there, but still rejects eval( in JavaScript (tested 2026-10-19).
+    if (isLibraryPath($file)) {
+        if ($ext === 'js') {
+            checkJsEval($content, $file, $r);
+        }
+
+        return;
+    }
 
     if (str_starts_with($content, "\xEF\xBB\xBF")) {
         $r->error('encoding', 'File starts with a UTF-8 BOM.', $file);
@@ -408,10 +427,35 @@ function checkFile(string $root, string $file, array $rules, Report $r): void
             checkSql($content, $file, $r);
             break;
         case 'js':
+            checkJsEval($content, $file, $r);
             if (preg_match('/\bconsole\.(log|debug)\s*\(/', $content)) {
                 $r->warning('debug', 'Remove console.log/console.debug.', $file);
             }
             break;
+    }
+}
+
+/**
+ * True for third-party code: a file below a folder named lib, libs, vendor or vendors (anywhere in the path).
+ * The online validator skips the license header and the expected structure there (tested 2026-10-19 with
+ * views/js/vendor/, views/js/lib/, views/js/libs/, views/js/vendors/, views/lib/ and libs/; not exempt:
+ * library, plugins, third-party, myvendorstuff).
+ */
+function isLibraryPath(string $file): bool
+{
+    return array_intersect(explode('/', dirname($file)), ['lib', 'libs', 'vendor', 'vendors']) !== [];
+}
+
+/**
+ * eval( in JavaScript, matched like the online validator: also in comments and after a dot (window.eval()),
+ * not inside a string ('eval('), not evaluate( and not a reference without a call (var a = eval).
+ */
+function checkJsEval(string $content, string $file, Report $r): void
+{
+    foreach (preg_split('/\R/', $content) ?: [] as $n => $line) {
+        if (preg_match('/(?<![\w$\'"])eval\s*\(/', $line)) {
+            $r->error('security', 'Using eval function in JS file or script tag is forbidden (also in third-party code and comments).', $file, $n + 1);
+        }
     }
 }
 
@@ -435,7 +479,8 @@ function checkLicense(string $content, string $file, array $rules, Report $r, st
     $licenseFound = preg_match($rules['Licenses']['Copyright regex'] . 'm', $head)
         || ($ext === 'twig' && preg_match('/^\s*#.*(LICENSE|COPYRIGHT)/mi', $head));
     if (!$licenseFound) {
-        $level = in_array($ext, ['php', 'tpl'], true) ? 'error' : 'warning';
+        // JavaScript without a header is an error online too; CSS is not reported online (house rule: warning).
+        $level = in_array($ext, ['php', 'tpl', 'js'], true) ? 'error' : 'warning';
         $r->$level('license', 'Missing license header (a " * ...LICENSE..." line).', $file);
     }
     $yearRegex = str_replace('<year>', date('y'), $rules['Licenses']['Copyright year regex']);

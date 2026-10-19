@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.11.0] - 2026-10-19
+
+### Toegevoegd
+- Uitzondering voor JavaScript van derden (TST-27): scripts in `views/js/vendor/<bibliotheek>/` hoeven geen tests en
+  tellen niet mee voor `ps-module assets` en de DoD-stap `assets`. `ps-module conventions` eist per bibliotheek een
+  eigen map met het licentiebestand (`LICENSE`, `LICENCE` of `COPYING`). De `_dev/`-template van de skill (build.mjs,
+  vitest.config.mjs, eslint.config.mjs) slaat de map over; werk `_dev/` van bestaande modules daarmee bij.
+  JavaScript in een andere `lib/`-, `libs/`-, `vendor/`- of `vendors/`-map is een fout (de validator slaat daar de
+  licentiecheck over, dus eigen code hoort er niet).
+
+### Gewijzigd
+- `ps-module validate` volgt de online validator voor JavaScript (getest met twee testzips op validator.prestashop.com):
+  - geen licentieheader en geen structuurcheck in mappen `lib`, `libs`, `vendor` en `vendors` (ook `views/js/vendor/`,
+    dat eerder helemaal werd overgeslagen);
+  - `eval(` in JavaScript is een fout, ook in libraries van derden en comments;
+  - een library die PrestaShop meelevert is een fout (was waarschuwing), alleen op exacte bestandsnaam met `included`;
+  - JavaScript zonder licentieheader en JavaScript buiten `views/js/` zijn fouten (waren waarschuwingen).
+
 ## [1.10.0] - 2026-10-19
 
 ### Toegevoegd

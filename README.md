@@ -51,7 +51,9 @@ Voor elke module met eigen JavaScript in `views/js/` of een `<module>/_dev/packa
 `js-tests`, recept `typescript`). `_dev/` bevat `package.json`, `build.mjs`, `vitest.config.mjs` en de tests in
 `_dev/tests/`; met TypeScript ook de bronnen (`_dev/front/*.ts`, `_dev/back/*.ts`), die `build.mjs` met esbuild bundelt
 naar een leesbare `views/js/<entry>.js` met de licentieheader. Zonder TypeScript zijn de scripts in `views/js/` met de
-hand geschreven. `views/js/` staat in git, zodat de module zonder Node vanuit git werkt.
+hand geschreven. `views/js/` staat in git, zodat de module zonder Node vanuit git werkt. Bibliotheken van derden in
+`views/js/vendor/<bibliotheek>/` vallen erbuiten (geen tests, lint of dekking); `ps-module conventions` eist wel per
+bibliotheek een eigen map met het licentiebestand (`LICENSE`, `LICENCE` of `COPYING`).
 
 - `assets build`: `npm install` (zonder lock) of `npm ci` (lock nieuwer dan `node_modules`), dan `npm run build`:
   typecheck (`tsc`, ook de tests), lint (ESLint), tests met Vitest + jsdom en dekking (Istanbul) van **100 % per bestand**

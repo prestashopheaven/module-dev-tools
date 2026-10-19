@@ -84,7 +84,7 @@ if ($violations === []) {
 }
 echo "Conventions check found " . count($violations) . " problem(s):\n  " . implode("\n  ", $violations) . "\n";
 if (preg_grep('/ TST-/', $violations) !== []) {
-    echo "Tests (TST-04..08): every class and method tested, every fault case expected; see conventions TST.
+    echo "Tests (TST-04..08, TST-27): every class and method tested, every fault case expected; see conventions TST.
 ";
 }
 if (preg_grep('/ ARCH-/', $violations) !== []) {

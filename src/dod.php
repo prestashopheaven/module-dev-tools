@@ -149,8 +149,9 @@ function dod_last_change(string $repoDir): int
 }
 
 /**
- * JavaScript files of the module in views/js/ (recursive), relative to the module directory and sorted:
- * every one of them must be tested (ps-module assets, TST-20..29).
+ * Own JavaScript files of the module in views/js/ (recursive), relative to the module directory and sorted:
+ * every one of them must be tested (ps-module assets, TST-20..29). Third-party libraries in views/js/vendor/
+ * are left out (TST-27: no tests, but a license file per library, checked by the conventions check).
  *
  * @return string[]
  */
@@ -163,8 +164,9 @@ function dod_module_scripts(string $moduleDir): array
     $files = [];
     $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS));
     foreach ($it as $file) {
-        if (strtolower($file->getExtension()) === 'js') {
-            $files[] = substr(str_replace('\\', '/', $file->getPathname()), strlen($moduleDir) + 1);
+        $relative = substr(str_replace('\\', '/', $file->getPathname()), strlen($moduleDir) + 1);
+        if (strtolower($file->getExtension()) === 'js' && !str_starts_with($relative, 'views/js/vendor/')) {
+            $files[] = $relative;
         }
     }
     sort($files, SORT_STRING);

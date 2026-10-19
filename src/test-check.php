@@ -25,6 +25,7 @@
  *           $this->expectException(X::class)
  *   TST-07  every command and query of src/Application is dispatched in an integration test (new <Name>Command()
  *           / new <Name>Query() in tests/Integration)
+ *   TST-27  third-party JavaScript in views/js/vendor/<library>/ needs no tests, but its license file sits next to it
  * The coverage gate (TST-08, every line of Domain, Application and Presenter executed by the unit tests) is
  * coverage.php, run by "ps-module check".
  */
@@ -84,6 +85,64 @@ function checkTests(string $moduleDir): array
         }
         if (preg_match('#^src/Application/[^/]+/(Command|Query)/([^/]+)/\2\1\.php$#', $relative, $m) && !preg_match('/new\s+\\\\?(?:[\w\\\\]*\\\\)?' . preg_quote($m[2] . $m[1], '/') . '\s*\(/', $integrationText)) {
             $found[] = "$relative:{$subject['line']} TST-07 {$m[2]}{$m[1]} is never dispatched in an integration test (tests/Integration: through the bus, against a real shop)";
+        }
+    }
+
+    return array_merge($found, checkVendorScripts($moduleDir));
+}
+
+/**
+ * TST-27: third-party JavaScript in views/js/vendor/ needs no tests, but every library sits in its own folder
+ * views/js/vendor/<library>/ together with its license file (LICENSE, LICENCE or COPYING, any extension).
+ *
+ * @return string[] violations as "path:1 TST-27 message"
+ */
+function checkVendorScripts(string $moduleDir): array
+{
+    $found = [];
+    // The online validator skips the license header in every lib/, libs/, vendor/ and vendors/ folder: own code
+    // there would lose that check. Third-party JavaScript has one place, views/js/vendor/<library>/.
+    $it = new RecursiveIteratorIterator(new RecursiveCallbackFilterIterator(
+        new RecursiveDirectoryIterator($moduleDir, FilesystemIterator::SKIP_DOTS),
+        static fn (SplFileInfo $f, string $path): bool => !($f->isDir() && dirname(str_replace('\\', '/', $path)) === $moduleDir
+            && in_array($f->getFilename(), ['vendor', 'node_modules', '_dev', 'tests', '.cache', 'dist', '.git'], true))
+    ));
+    foreach ($it as $file) {
+        $relative = substr(str_replace('\\', '/', $file->getPathname()), strlen($moduleDir) + 1);
+        if (strtolower($file->getExtension()) === 'js' && !str_starts_with($relative, 'views/js/vendor/')
+            && array_intersect(explode('/', dirname($relative)), ['lib', 'libs', 'vendor', 'vendors']) !== []) {
+            $found[] = "$relative:1 TST-27 JavaScript in a lib/, libs/, vendor/ or vendors/ folder (the validator skips its license check there): third-party code goes in views/js/vendor/<library>/, own code elsewhere in views/js/";
+        }
+    }
+    $vendorDir = "$moduleDir/views/js/vendor";
+    if (!is_dir($vendorDir)) {
+        return $found;
+    }
+    foreach (scandir($vendorDir) ?: [] as $entry) {
+        if ($entry === '.' || $entry === '..' || $entry === 'index.php') {
+            continue;
+        }
+        if (!is_dir("$vendorDir/$entry")) {
+            $found[] = "views/js/vendor/$entry:1 TST-27 third-party files go in a folder per library with its license: views/js/vendor/<library>/";
+            continue;
+        }
+        $scripts = [];
+        $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator("$vendorDir/$entry", FilesystemIterator::SKIP_DOTS));
+        foreach ($it as $file) {
+            if (strtolower($file->getExtension()) === 'js') {
+                $scripts[] = $file->getPathname();
+            }
+        }
+        if ($scripts === []) {
+            continue;
+        }
+        $licenses = array_filter(
+            scandir("$vendorDir/$entry") ?: [],
+            static fn (string $f): bool => preg_match('/^(LICEN[CS]E|COPYING)([.-][\w.-]+)?$/i', $f) === 1
+                && is_file("$vendorDir/$entry/$f") && trim((string) file_get_contents("$vendorDir/$entry/$f")) !== ''
+        );
+        if ($licenses === []) {
+            $found[] = "views/js/vendor/$entry/:1 TST-27 third-party library without its license: add the library's LICENSE file to views/js/vendor/$entry/ (only unmodified third-party code is exempt from tests)";
         }
     }
 
