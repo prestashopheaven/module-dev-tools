@@ -105,6 +105,11 @@ module, vertalingen bijgewerkt na een wijziging in het Engels), maakt screenshot
 als de code veranderd is, en genereert `docs/manual/<iso>/manual.html` + PDF, `docs/marketing/<iso>/`
 en `docs/index.html`. Daarna staat de stap `docs` in de definition of done.
 
+- Demodata voor de screenshots: `docs/docs.json > shop.setup` noemt een PHP-script in `docs/` (bijv. `"setup": "shop-setup.php"`).
+  `docs build` draait het in de testwinkel nadat de module is geïnstalleerd (en de talen en `shop.configuration`
+  klaarstaan), vóór de screenshots, met PrestaShop en de Symfony-kernel geladen en `$languages` (iso => id, active,
+  locale). Het script mag een korte melding teruggeven. Faalt het, dan stopt de build. Een gewijzigd script maakt de
+  screenshots verouderd.
 - Screenshots en PDF draaien in de image `prestashopheaven/docs-tools:<hash>` (Playwright/Chromium met
   Noto-fonts voor alle schriften), die bij het eerste gebruik lokaal gebouwd wordt uit
   `resources/docs/Dockerfile`.

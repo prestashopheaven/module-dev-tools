@@ -311,13 +311,62 @@ function docs_http_status(string $url): int
 // Screenshots
 
 /**
- * Hash of the settings that determine the screenshots (shop block and screenshot list of docs.json).
+ * Hash of the settings that determine the screenshots (shop block and screenshot list of docs.json, and the
+ * content of the shop.setup script: changed demo data means new screenshots).
  *
  * @param array<string, mixed> $ctx
  */
 function docs_shots_config_hash(array $ctx): string
 {
-    return substr(sha1((string) json_encode([$ctx['config']['shop'] ?? [], $ctx['config']['screenshots'] ?? [], $ctx['languages']])), 0, 12);
+    $setup = docs_shop_setup_file($ctx);
+    $setupHash = $setup !== null && is_file($setup) ? sha1((string) file_get_contents($setup)) : '';
+
+    return substr(sha1((string) json_encode([$ctx['config']['shop'] ?? [], $ctx['config']['screenshots'] ?? [], $ctx['languages'], $setupHash])), 0, 12);
+}
+
+/**
+ * The shop.setup script of docs.json as a path in docs/, or null when there is none. The script prepares the test
+ * shop for the screenshots (demo data); docs_shots_on_shop() runs it after the module is installed.
+ *
+ * @param array<string, mixed> $ctx
+ */
+function docs_shop_setup_file(array $ctx): ?string
+{
+    $setup = trim((string) ($ctx['config']['shop']['setup'] ?? ''));
+    if ($setup === '') {
+        return null;
+    }
+
+    return $ctx['docs'] . '/' . ltrim(str_replace('\\', '/', $setup), '/');
+}
+
+/**
+ * Runs the shop.setup script of docs.json in the test shop (with PrestaShop loaded, see resources/docs/shop-probe.php
+ * "setup"). Returns null when it ran or there is none, else the reason it failed.
+ *
+ * @param array<string, mixed> $ctx
+ */
+function docs_run_shop_setup(array $ctx, string $container): ?string
+{
+    $file = docs_shop_setup_file($ctx);
+    if ($file === null) {
+        return null;
+    }
+    if (!is_file($file) || !str_ends_with($file, '.php')) {
+        return 'docs.json > shop.setup: ' . $ctx['config']['shop']['setup'] . ' is not a PHP file in docs/';
+    }
+    echo '  setup: running docs/' . ltrim((string) $ctx['config']['shop']['setup'], '/') . "...\n";
+    docs_exec(['docker', 'cp', $file, "$container:/tmp/docs-setup.php"], 60);
+    docs_exec(['docker', 'exec', '-u', 'root', $container, 'chmod', '644', '/tmp/docs-setup.php'], 60);
+    $result = docs_shop_probe($container, ['setup', '/tmp/docs-setup.php']);
+    if (empty($result['ok'])) {
+        return 'docs.json > shop.setup failed: ' . ($result['message'] ?? '?');
+    }
+    if (($result['message'] ?? '') !== '') {
+        echo '  setup: ' . $result['message'] . "\n";
+    }
+
+    return null;
 }
 
 /**
@@ -463,6 +512,18 @@ function docs_shot_version(array $ctx, array $shot): string
 }
 
 /**
+ * PrestaShop's own ISO code of a language (ps_lang.iso_code, also the language in shop URLs). It differs from
+ * the code in i18n.json for Slovenian (si) and Vietnamese (vn); without it those languages were never installed
+ * in the test shop and got the screenshots of the source language.
+ *
+ * @param array<string, mixed> $ctx
+ */
+function docs_shop_iso(array $ctx, string $iso): string
+{
+    return (string) ($ctx['catalog'][$iso]['ps_iso'] ?? $iso);
+}
+
+/**
  * Takes screenshots in the test shop of one PrestaShop version: starts it (or deploys the current code
  * into the running one), installs the languages, sets the configuration, shoots every language.
  *
@@ -494,15 +555,16 @@ function docs_shots_on_shop(array $ctx, string $version, array $shots, bool $kee
     $notes = [];
     $installLanguages = (bool) ($ctx['config']['shop']['install_languages'] ?? true);
     foreach ($ctx['languages'] as $iso) {
-        if ($iso === $ctx['source'] && isset($installed[$iso])) {
+        $psIso = docs_shop_iso($ctx, $iso);
+        if ($iso === $ctx['source'] && isset($installed[$psIso])) {
             continue;
         }
         if (!$installLanguages) {
             $failures[$iso] = 'the shop does not have this language (docs.json > shop.install_languages is false)';
             continue;
         }
-        echo "  language $iso: " . (isset($installed[$iso]) ? 'checking the translation pack' : 'installing it in the shop') . "...\n";
-        $result = docs_shop_probe($container, ['install', $iso]);
+        echo "  language $iso: " . (isset($installed[$psIso]) ? 'checking the translation pack' : 'installing it in the shop') . "...\n";
+        $result = docs_shop_probe($container, ['install', $psIso]);
         if (empty($result['ok'])) {
             $failures[$iso] = "installing the language in PrestaShop $version failed: " . ($result['message'] ?? '?');
         } elseif (empty($result['pack'])) {
@@ -518,6 +580,11 @@ function docs_shots_on_shop(array $ctx, string $version, array $shots, bool $kee
             $notes[] = 'setting docs.json > shop.configuration failed: ' . ($result['message'] ?? '?');
         }
     }
+    // Demo data for the screenshots (after the install and the languages, so the script sees every language).
+    $setupError = docs_run_shop_setup($ctx, $container);
+    if ($setupError !== null) {
+        return ['error' => $setupError];
+    }
     $multiLanguage = count(array_filter($installed, static fn (array $l): bool => !empty($l['active']))) > 1;
 
     // Per language: back-office language of the employee, front-office URL with the language.
@@ -525,7 +592,8 @@ function docs_shots_on_shop(array $ctx, string $version, array $shots, bool $kee
     $fallbacks = [];
     $languages = [];
     foreach ($ctx['languages'] as $iso) {
-        $shopLanguage = isset($installed[$iso]) ? $iso : $ctx['source'];
+        $psIso = docs_shop_iso($ctx, $iso);
+        $shopLanguage = isset($installed[$psIso]) ? $iso : $ctx['source'];
         $languages[$iso] = ['shop_language' => $shopLanguage];
         if ($shopLanguage !== $iso) {
             $fallbacks[$iso] = $failures[$iso] ?? "PrestaShop $version does not have this language";
@@ -535,16 +603,16 @@ function docs_shots_on_shop(array $ctx, string $version, array $shots, bool $kee
         if ($list === []) {
             continue;
         }
-        docs_shop_probe($container, ['employee-lang', $iso]);
+        docs_shop_probe($container, ['employee-lang', $psIso]);
         $jobShots = [];
         foreach ($list as $shot) {
             $path = (string) $shot['path'];
             if (($shot['area'] ?? '') === 'fo') {
                 $path = '/' . ltrim($path, '/');
                 if (str_contains($path, '?') || str_starts_with($path, '/index.php')) {
-                    $path .= (str_contains($path, '?') ? '&' : '?') . 'id_lang=' . (int) $installed[$iso]['id'];
+                    $path .= (str_contains($path, '?') ? '&' : '?') . 'id_lang=' . (int) $installed[$psIso]['id'];
                 } elseif ($multiLanguage && !preg_match('#^/[a-z]{2}(/|$)#', $path)) {
-                    $path = '/' . $iso . $path;
+                    $path = '/' . $psIso . $path;
                 }
             }
             @mkdir($ctx['docs'] . "/screenshots/$iso", 0775, true);
@@ -572,7 +640,7 @@ function docs_shots_on_shop(array $ctx, string $version, array $shots, bool $kee
         }
         $results = array_merge($results, $run['results']);
     }
-    docs_shop_probe($container, ['employee-lang', $ctx['source']]);
+    docs_shop_probe($container, ['employee-lang', docs_shop_iso($ctx, $ctx['source'])]);
     if (!$running && !$keep) {
         echo "Stopping the shop PrestaShop $version (it was started for the screenshots; --keep leaves it running).\n";
         docs_ps_test($ctx, ['down', $version]);

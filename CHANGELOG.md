@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.12.0] - 2026-10-19
+
+### Toegevoegd
+- `docs/docs.json > shop.setup`: een PHP-script in `docs/` dat `ps-module docs build` in de testwinkel draait nadat de
+  module is geïnstalleerd en vóór de screenshots (met PrestaShop en de Symfony-kernel geladen, en `$languages`). Zo
+  tonen de screenshots demodata die de module nodig heeft (bijv. een changelog bij een demoproduct): `docs build` zet de
+  module voor de screenshots opnieuw neer, dus data die je vooraf in de winkel zet, verdwijnt. Een gewijzigd script
+  maakt de screenshots verouderd; een fout in het script stopt de build. Nieuw commando `setup <bestand>` in
+  `resources/docs/shop-probe.php`.
+
+### Opgelost
+- Screenshots in het Sloveens en Vietnamees: de testwinkel kreeg de code uit `i18n.json` (`sl`, `vi`) in plaats van
+  PrestaShops eigen code (`si`, `vn`). De taal werd dan niet geïnstalleerd en de screenshots kwamen uit de brontaal.
+  Installeren, de taal van de medewerker, `id_lang` en de taal in de URL gebruiken nu `ps_iso` uit `languages.json`.
+- Een taal installeren in een testwinkel met 30+ talen liep vast op de geheugenlimiet van 512M (PrestaShop laadt de
+  catalogi van alle talen). `resources/docs/shop-probe.php` draait nu met 2048M.
+
 ## [1.11.0] - 2026-10-19
 
 ### Toegevoegd

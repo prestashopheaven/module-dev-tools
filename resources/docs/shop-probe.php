@@ -20,7 +20,12 @@
  *   php shop-probe.php install <iso>             install a language (with its translation pack when available)
  *   php shop-probe.php employee-lang <iso>       back-office language of the demo employee
  *   php shop-probe.php config <base64 json>      Configuration::updateValue for each key => value
+ *   php shop-probe.php setup <file>              runs the shop.setup script of docs.json (demo data for the screenshots)
  */
+
+// Installing a language loads the translation catalogues of every installed language: with 30+ languages that is
+// more than the 512M of the PrestaShop image (fatal error in XliffUtils). Only a test shop runs this script.
+ini_set('memory_limit', '2048M');
 
 $root = getenv('_PS_ROOT_DIR_') ?: '/var/www/html';
 if (!defined('_PS_ADMIN_DIR_')) {
@@ -136,6 +141,19 @@ try {
                 Configuration::updateValue((string) $key, is_array($value) ? $value : (string) $value, true);
             }
             probe_out(['ok' => is_array($values), 'count' => is_array($values) ? count($values) : 0]);
+            // no break
+        case 'setup':
+            // The script of docs.json > shop.setup, with PrestaShop and the Symfony kernel loaded. It gets $languages
+            // (iso => [id, active, locale]) and may return a short message for the build output.
+            probe_boot_kernel();
+            if (!is_file($arg)) {
+                probe_out(['ok' => false, 'message' => "setup script $arg not found"]);
+            }
+            $message = (static function (string $file, array $languages) {
+                return require $file;
+            })($arg, probe_languages());
+            Cache::clean('*');
+            probe_out(['ok' => true, 'message' => is_string($message) ? $message : '']);
             // no break
         default:
             probe_out(['ok' => false, 'message' => "unknown command '$command'"]);
