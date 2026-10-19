@@ -16,12 +16,16 @@
  *
  * The API is not officially documented. Request format: multipart POST /api/modules with
  * fields "archive" (zip), "key" and "compatibility_<major>" = true.
- * The raw response is saved next to the zip as <module>.validator.json.
+ * The raw response is saved next to the zip as <module>.validator.json. The validator accepts at most 30 MB, so
+ * it gets a temporary copy of the zip without the manual PDFs (docs/*.pdf); the zip itself is not changed.
  *
  * Exit code: 0 = no errors reported, 1 = errors reported, 2 = request failed.
  */
 
 declare(strict_types=1);
+
+/** Largest upload validator.prestashop.com accepts (30 MB; HTTP 413 above it). */
+const VALIDATOR_MAX_BYTES = 30 * 1024 * 1024;
 
 $options = [];
 $target = '';
@@ -68,6 +72,24 @@ if (is_dir($target)) {
 }
 fwrite(STDERR, "Zip: $zip\n");
 
+// The validator takes at most 30 MB (nginx answers 413 above that, measured 2026-10-20). The manual PDFs (one per
+// language, with screenshots) are no code and make up most of a zip with many languages, so the validator gets a
+// temporary copy without them. The release zip itself keeps the PDFs (REL-06).
+$upload = uploadCopyWithoutPdfs($zip);
+if ($upload === null) {
+    exit(2);
+}
+register_shutdown_function(static function () use ($upload, $zip): void {
+    if ($upload !== $zip && is_file($upload)) {
+        unlink($upload);
+        @rmdir(dirname($upload));
+    }
+});
+if (filesize($upload) > VALIDATOR_MAX_BYTES) {
+    fwrite(STDERR, sprintf("The zip for the validator is %.1f MB, more than the %d MB it accepts (even without the manual PDFs).\n", filesize($upload) / 1048576, VALIDATOR_MAX_BYTES / 1048576));
+    exit(2);
+}
+
 // 2. Compatibility flags
 $majors = isset($options['compat'])
     ? array_filter(array_map('trim', explode(',', (string) $options['compat'])))
@@ -76,7 +98,7 @@ fwrite(STDERR, 'Checking compatibility with PrestaShop ' . implode(', ', $majors
 
 // 3. Upload
 $fields = [
-    'archive' => new CURLFile($zip, 'application/zip', basename($zip)),
+    'archive' => new CURLFile($upload, 'application/zip', basename($zip)),
     'key' => $apiKey,
 ];
 foreach ($majors as $major) {
@@ -95,6 +117,8 @@ curl_setopt_array($ch, [
 $body = curl_exec($ch);
 $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
 $error = curl_error($ch);
+// Release the upload file now: on Windows an open handle keeps the temporary copy (and its directory) in place.
+unset($ch, $fields);
 
 if ($body === false) {
     fwrite(STDERR, "Request failed: $error\n");
@@ -140,6 +164,49 @@ if ($errors === 0 && is_file(__DIR__ . '/dod.php')) {
 exit($errors > 0 ? 1 : 0);
 
 // ---------------------------------------------------------------------------
+
+/**
+ * A copy of the zip for the validator without the manual PDFs (<module>/docs/*.pdf), in a temporary directory and
+ * with the same file name. Returns the zip itself when it has no PDFs, null when the copy failed.
+ */
+function uploadCopyWithoutPdfs(string $zip): ?string
+{
+    $za = new ZipArchive();
+    if ($za->open($zip) !== true) {
+        fwrite(STDERR, "Cannot open $zip\n");
+
+        return null;
+    }
+    $pdfs = [];
+    for ($i = 0; $i < $za->numFiles; ++$i) {
+        $name = (string) $za->getNameIndex($i);
+        if (preg_match('#^[^/]+/docs/[^/]+\.pdf$#i', $name)) {
+            $pdfs[] = $name;
+        }
+    }
+    $za->close();
+    if ($pdfs === []) {
+        return $zip;
+    }
+    $dir = sys_get_temp_dir() . '/ps-module-validator-' . bin2hex(random_bytes(4));
+    $copy = $dir . '/' . basename($zip);
+    if (!mkdir($dir, 0700, true) || !copy($zip, $copy) || $za->open($copy) !== true) {
+        fwrite(STDERR, "Cannot make a copy of the zip in $dir\n");
+
+        return null;
+    }
+    foreach ($pdfs as $name) {
+        $za->deleteName($name);
+    }
+    if (!$za->close()) {
+        fwrite(STDERR, "Cannot write the copy of the zip in $dir\n");
+
+        return null;
+    }
+    fwrite(STDERR, sprintf("Sending a copy without the %d manual PDF(s) in docs/ (%.1f MB instead of %.1f MB; the validator accepts at most %d MB).\n", count($pdfs), filesize($copy) / 1048576, filesize($zip) / 1048576, VALIDATOR_MAX_BYTES / 1048576));
+
+    return $copy;
+}
 
 /**
  * Reads KEY=value pairs from .env files in the directory and its parents; the nearest file wins.

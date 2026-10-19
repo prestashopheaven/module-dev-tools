@@ -13,7 +13,7 @@ Ontwikkeltools voor PrestaShopHeaven-modules. Installeer als `require-dev`; alle
 | `ps-module validate [dir\|zip]` | Validator-precheck (regels live van validator.prestashop.com) |
 | `ps-module build` | `../dist/<module>.zip`: no-dev vendor, gescopete packages, `index.php` overal |
 | `ps-module validate-zip` | Validator-precheck van de release-zip |
-| `ps-module validator-api` | Zip naar validator.prestashop.com (`PRESTASHOP_VALIDATOR_API_KEY` in `.env`) |
+| `ps-module validator-api` | Zip naar validator.prestashop.com (`PRESTASHOP_VALIDATOR_API_KEY` in `.env`); de validator neemt max. 30 MB aan en krijgt daarom een tijdelijke kopie zonder de handleiding-PDF's (`docs/*.pdf`) |
 | `ps-module shops <cmd>` | Testwinkels in Docker: `doctor`, `run`, `up`, `down`, `integration`, `behat`, `upgrade`, `multistore` |
 | `ps-module translations <cmd>` | Teksten van de module in elke taal uit `<repo>/i18n.json`: `extract`, `status`, `todo`, `apply`, `fill`, `auto` (DeepL), `accept`, `prune`, `mails-ok`, `build` (XLF), `check` |
 | `ps-module context [--no-notes\|--generate\|--status]` | `<repo>/CONTEXT.md`: Notes (door Claude) + gegenereerd codeoverzicht; geïmporteerd door de `CLAUDE.md` van de repo |

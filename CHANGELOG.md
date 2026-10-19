@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.12.1] - 2026-10-20
+
+### Opgelost
+- `ps-module validator-api`: validator.prestashop.com neemt maximaal 30 MB aan (daarboven HTTP 413). Een zip met veel talen
+  kwam daarboven door de handleiding-PDF's (33 talen: 45 MB). De validator krijgt nu een tijdelijke kopie zonder
+  `docs/*.pdf` (geen code); de release-zip zelf houdt de PDF's. Is ook die kopie te groot, dan stopt het commando met een
+  duidelijke melding in plaats van de HTML van de 413.
+
 ## [1.12.0] - 2026-10-19
 
 ### Toegevoegd
