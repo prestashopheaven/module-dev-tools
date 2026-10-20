@@ -626,7 +626,43 @@ function publish_demo_upload_tools(\phpseclib3\Net\SFTP $ssh, string $tools, boo
             throw new RuntimeException("upload of $file failed.");
         }
     }
+    // The brand of the workspace (branding/, found upwards from here): logo.svg for the back office and the intro
+    // page, a PNG of it (brand.json > logo_png) for the shop logo and the login page. Kept on the server.
+    foreach (publish_brand_files() as $name => $local) {
+        if (!$ssh->put("$tools/$name", $local, \phpseclib3\Net\SFTP::SOURCE_LOCAL_FILE)) {
+            throw new RuntimeException("upload of $name failed.");
+        }
+    }
     $ssh->chmod(0755, "$tools/demo-site.sh");
+}
+
+/**
+ * The brand files for the demo shop from the workspace's branding/ (searched upwards from the current directory):
+ * brand-logo.svg (branding/logo.svg) and brand-logo.png (brand.json > logo_png). Empty without branding/.
+ *
+ * @return array<string, string> name on the server => local file
+ */
+function publish_brand_files(): array
+{
+    for ($dir = (string) getcwd(), $i = 0; $i < 6 && $dir !== dirname($dir); $dir = dirname($dir), ++$i) {
+        if (!is_file("$dir/branding/brand.json")) {
+            continue;
+        }
+        $brand = json_decode((string) file_get_contents("$dir/branding/brand.json"), true);
+        $files = [];
+        $svg = "$dir/branding/" . (string) ($brand['logo'] ?? 'logo.svg');
+        if (is_file($svg)) {
+            $files['brand-logo.svg'] = $svg;
+        }
+        $png = "$dir/branding/" . (string) ($brand['logo_png'] ?? $brand['logo_original'] ?? '');
+        if (($brand['logo_png'] ?? $brand['logo_original'] ?? '') !== '' && is_file($png) && strtolower(pathinfo($png, PATHINFO_EXTENSION)) === 'png') {
+            $files['brand-logo.png'] = $png;
+        }
+
+        return $files;
+    }
+
+    return [];
 }
 
 /**

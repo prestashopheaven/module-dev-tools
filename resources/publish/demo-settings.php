@@ -20,10 +20,15 @@
  * - the languages of the demo (DEMO-01, e.g. "en nl"): missing ones are installed (language pack from PrestaShop),
  *   they are active, every other language is switched off; the default language is one of them;
  * - e-mail off: PS_MAIL_METHOD = 3 ("never send e-mails"); in demo mode visitors cannot change it;
- * - the demo employee <email> / <password> (SuperAdmin, active), created or reset;
- * - the intro page <intro-path>/index.html: links to the shop and to the back office with the login filled in
- *   (PrestaShop 9 fills the login form from ?email=&password= in demo mode), and the PrestaShopHeaven modules in the
- *   shop with their version and a link to their manuals on the docs site.
+ * - the demo employee <email> / <password> (SuperAdmin, active), created or reset; never two with that address
+ *   (PrestaShop's login fails on a duplicate e-mail address);
+ * - the login always filled in: PrestaShop 9 fills the login form from ?email=&password= in demo mode, so a block in
+ *   <admin>/.htaccess sends every GET of the login page without them to the same page with them (Apache);
+ * - the brand (when brand-logo.svg / brand-logo.png are next to this script, uploaded by ps-module from the
+ *   workspace's branding/): the shop logo (PS_LOGO, PNG), the logo of the back-office header (SVG, by a CSS rule in
+ *   the admin theme) and of the login page (img/prestashop@2x.png);
+ * - the intro page <intro-path>/index.html in the brand colours with the brand logo: links to the shop and to the back
+ *   office, and the PrestaShopHeaven modules in the shop with their version and a link to their manuals.
  * Prints "DEMO-SETTINGS-OK <admin folder>".
  */
 
@@ -81,7 +86,12 @@ Configuration::updateGlobalValue('PS_MAIL_METHOD', 3);
 
 // 2. The demo employee.
 $hashing = new PrestaShop\PrestaShop\Core\Crypto\Hashing();
-$id = (int) Employee::employeeExists($email);
+// Employee::employeeExists() only says yes or no: look the ids up, keep the lowest and remove duplicates.
+$ids = array_map('intval', array_column(Db::getInstance()->executeS('SELECT id_employee FROM ' . _DB_PREFIX_ . "employee WHERE email = '" . pSQL($email) . "' ORDER BY id_employee") ?: [], 'id_employee'));
+$id = $ids[0] ?? 0;
+foreach (array_slice($ids, 1) as $duplicate) {
+    (new Employee($duplicate))->delete();
+}
 $employee = $id > 0 ? new Employee($id) : new Employee();
 $employee->email = $email;
 $employee->firstname = 'Demo';
@@ -109,6 +119,43 @@ if ($adminDir === '') {
     fwrite(STDERR, "No back-office folder found in " . _PS_ROOT_DIR_ . ".\n");
     exit(1);
 }
+// 4. The login always filled in (Apache): GET of the login page without ?email= -> the same page with the login.
+$htaccess = _PS_ROOT_DIR_ . '/' . $adminDir . '/.htaccess';
+$rules = (string) @file_get_contents($htaccess);
+$rules = (string) preg_replace('/\n?# BEGIN heaven-demo-login.*?# END heaven-demo-login\n?/s', "\n", $rules);
+$query = 'email=' . rawurlencode($email) . '&password=' . rawurlencode($password);
+// At the top: PrestaShop's own rules below end with [L] and would handle the login URL first.
+$rules = "# BEGIN heaven-demo-login (demo-settings.php: the demo login is always filled in)\n"
+    . "<IfModule mod_rewrite.c>\nRewriteEngine on\nRewriteCond %{REQUEST_METHOD} =GET\nRewriteCond %{QUERY_STRING} !(^|&)email=\n"
+    . 'RewriteRule ^(index\.php/)?login$ %{REQUEST_URI}?' . str_replace('%', '\%', $query) . " [QSA,NE,R=302,L]\n</IfModule>\n# END heaven-demo-login\n\n" . ltrim($rules);
+file_put_contents($htaccess, $rules);
+
+// 5. The brand: shop logo, back-office header logo, login page logo.
+$brand = [];
+$brandSvg = __DIR__ . '/brand-logo.svg';
+$brandPng = __DIR__ . '/brand-logo.png';
+if (is_file($brandPng)) {
+    copy($brandPng, _PS_IMG_DIR_ . 'heaven-demo-logo.png');
+    Configuration::updateGlobalValue('PS_LOGO', 'heaven-demo-logo.png');
+    Db::getInstance()->delete('configuration', "name = 'PS_LOGO' AND (id_shop IS NOT NULL OR id_shop_group IS NOT NULL)");
+    // The login page shows img/prestashop@2x.png (PrestaShop 8.1 and 9.x).
+    copy($brandPng, _PS_IMG_DIR_ . 'prestashop@2x.png');
+    $brand[] = 'shop + login logo';
+}
+if (is_file($brandSvg)) {
+    foreach (['new-theme', 'default'] as $theme) {
+        $css = _PS_ROOT_DIR_ . '/' . $adminDir . "/themes/$theme/public/theme.css";
+        if (!is_file($css)) {
+            continue;
+        }
+        copy($brandSvg, dirname($css) . '/heaven-demo-logo.svg');
+        $text = (string) preg_replace('#\n?/\* BEGIN heaven-demo-logo \*/.*?/\* END heaven-demo-logo \*/\n?#s', '', (string) file_get_contents($css));
+        file_put_contents($css, rtrim($text) . "\n/* BEGIN heaven-demo-logo */#header_logo,.logo,.logo-container .logo{background-image:url(heaven-demo-logo.svg)!important;background-size:34px 34px!important;background-position:left center!important}/* END heaven-demo-logo */\n");
+    }
+    $brand[] = 'back-office logo';
+}
+Tools::clearSmartyCache();
+
 $base = rtrim($url !== '' ? $url : Tools::getShopDomainSsl(true) . __PS_BASE_URI__, '/');
 $login = $base . '/' . $adminDir . '/index.php?controller=AdminLogin&email=' . rawurlencode($email) . '&password=' . rawurlencode($password);
 $modules = [];
@@ -131,6 +178,12 @@ foreach ($modules as $module) {
 if ($items === '') {
     $items = "<li>No PrestaShopHeaven modules installed yet.</li>\n";
 }
+$dir = _PS_ROOT_DIR_ . '/' . $introPath;
+if (!is_dir($dir) && !mkdir($dir, 0775, true)) {
+    fwrite(STDERR, "Cannot create $dir.\n");
+    exit(1);
+}
+$logo = is_file($brandSvg) && copy($brandSvg, "$dir/logo.svg") ? 'logo.svg' : '';
 $html = '<!doctype html>
 <html lang="en">
 <head>
@@ -139,27 +192,31 @@ $html = '<!doctype html>
 <meta name="robots" content="noindex">
 <title>PrestaShopHeaven demo shop</title>
 <style>
-  :root { --bg: #f8fbff; --card: #fff; --text: #0f172a; --muted: #475569; --primary: #1e3a8a; --accent: #f5b42a; --line: #dbe4f0; }
+  :root { --bg: #fdf6fa; --card: #fff; --text: #3c3c3b; --muted: #6b6470; --primary: #e31b87; --secondary: #802982; --line: #efd9e7; }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  header { background: linear-gradient(135deg, #1e3a8a, #3b82f6); color: #fff; padding: 40px 16px; }
+  header { background: linear-gradient(135deg, var(--primary), var(--secondary)); color: #fff; padding: 40px 16px; }
   header div, main { max-width: 860px; margin: 0 auto; }
+  header div { display: flex; align-items: center; gap: 24px; }
+  header .logo { flex: none; width: 96px; height: 96px; background: #fff; border-radius: 20px; padding: 12px; }
   h1 { margin: 0 0 8px; font-size: 1.8rem; }
+  h2 { color: var(--secondary); }
   main { padding: 24px 16px 48px; }
   .buttons { display: flex; flex-wrap: wrap; gap: 12px; margin: 0 0 16px; }
   .buttons a { background: var(--primary); color: #fff; padding: 12px 20px; border-radius: 8px; text-decoration: none; font-weight: 600; }
-  .buttons a.admin { background: var(--accent); color: var(--text); }
+  .buttons a.admin { background: var(--secondary); }
+  .buttons a:hover { filter: brightness(1.08); }
   .note { color: var(--muted); }
-  code { background: #eef2ff; padding: 1px 6px; border-radius: 4px; }
+  code { background: #fbe3f0; color: var(--secondary); padding: 1px 6px; border-radius: 4px; }
   ul { list-style: none; padding: 0; margin: 0; background: var(--card); border: 1px solid var(--line); border-radius: 10px; }
   li { padding: 14px 16px; border-top: 1px solid var(--line); }
   li:first-child { border-top: 0; }
   li span { color: var(--muted); }
-  a { color: var(--primary); }
+  a { color: var(--secondary); }
 </style>
 </head>
 <body>
-<header><div><h1>PrestaShopHeaven demo shop</h1><p>Try every PrestaShopHeaven module in a real PrestaShop ' . $e(_PS_VERSION_) . ' shop, in the shop and in the back office.</p></div></header>
+<header><div>' . ($logo !== '' ? '<img class="logo" src="' . $e($logo) . '" alt="PrestaShopHeaven">' : '') . '<div><h1>PrestaShopHeaven demo shop</h1><p>Try every PrestaShopHeaven module in a real PrestaShop ' . $e(_PS_VERSION_) . ' shop, in the shop and in the back office.</p></div></div></header>
 <main>
   <p class="buttons"><a href="' . $e($base . '/') . '">Open the shop</a> <a class="admin" href="' . $e($login) . '">Open the back office</a></p>
   <p class="note">Back office login (already filled in, just click "Log in"): <code>' . $e($email) . '</code> / <code>' . $e($password) . '</code>.
@@ -172,11 +229,6 @@ $html = '<!doctype html>
 </body>
 </html>
 ';
-$dir = _PS_ROOT_DIR_ . '/' . $introPath;
-if (!is_dir($dir) && !mkdir($dir, 0775, true)) {
-    fwrite(STDERR, "Cannot create $dir.\n");
-    exit(1);
-}
 file_put_contents("$dir/index.html", $html);
-echo 'DEMO-SETTINGS-OK ' . $adminDir . ' (languages ' . ($wanted !== [] ? implode(' ', $wanted) : 'unchanged') . ', e-mail off, employee ' . $email . ', intro /' . $introPath . '/, ' . count($modules) . " module(s))\n";
+echo 'DEMO-SETTINGS-OK ' . $adminDir . ' (languages ' . ($wanted !== [] ? implode(' ', $wanted) : 'unchanged') . ', e-mail off, employee ' . $email . ', login filled in, brand: ' . ($brand !== [] ? implode(', ', $brand) : 'no brand files') . ', intro /' . $introPath . '/, ' . count($modules) . " module(s))\n";
 exit(0);

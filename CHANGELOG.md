@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.15.1] - 2026-10-20
+
+### Opgelost
+- Demowinkel: inloggen in de backoffice gaf een fout (Doctrine `NonUniqueResultException`): `demo-settings.php` maakte
+  bij een tweede run een tweede medewerker met `demo@demo.com` (`Employee::employeeExists()` geeft in PS 9 een bool, geen
+  id). Nu op id opgezocht; dubbele medewerkers worden verwijderd (ook na het terugzetten van een oude snapshot).
+
+### Toegevoegd
+- Demowinkel: de inlog staat altijd ingevuld, ook bij het rechtstreeks openen van de admin-URL (blok bovenaan
+  `<admin>/.htaccess`, Apache). Het merk uit `branding/` van de werkruimte (`publish demo`, `demo-site setup|config`
+  sturen `logo.svg` en `brand.json > logo_png` mee): winkellogo, logo in de backoffice-kop en op het inlogscherm, en
+  de introductiepagina in de merkkleuren met het logo.
+
 ## [1.15.0] - 2026-10-20
 
 ### Toegevoegd
