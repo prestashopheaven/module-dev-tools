@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.13.1] - 2026-10-20
+
+### Opgelost
+- `ps-module docs` zag de map `docs/content/logo-suggestions/` aan voor een taal die niet in `i18n.json` staat
+  (waarschuwing bij elke module met logo-suggesties).
+
 ## [1.13.0] - 2026-10-20
 
 ### Toegevoegd

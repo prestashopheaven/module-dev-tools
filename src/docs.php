@@ -420,7 +420,8 @@ function docs_validate(array $ctx): array
         }
     }
     foreach (glob($ctx['docs'] . '/content/*', GLOB_ONLYDIR) ?: [] as $dir) {
-        if (!in_array(basename($dir), $ctx['languages'], true)) {
+        // logo-suggestions/ holds the logo suggestions of every language (MKT-07), not a language.
+        if (basename($dir) !== 'logo-suggestions' && !in_array(basename($dir), $ctx['languages'], true)) {
             $add('warning', basename($dir), docs_rel($ctx, $dir), 'content for a language that is not in i18n.json (remove it or add the language)');
         }
     }
