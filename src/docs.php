@@ -27,6 +27,8 @@
  *                                        put the screenshots in the frame template of the module (docs/frame/):
  *                                        docs/framed/<iso>/<id>.png; --preview: pages to try template edits
  *   ps-module docs marketing [<iso>...]  render docs/marketing/<iso>/marketing.html, .md and .json
+ *   ps-module docs logo <file>          the chosen logo (MKT-07) becomes the module's: docs/content/logo.svg|png and
+ *                                        <module>/logo.png (512 x 512, transparent); ask the user first, before docs build
  *   ps-module docs cover [--force] [--name=..] [--logo=..] [--bar=fit|full] [--stripes=under|none|over] [--out=..]
  *                                        the box cover (MKT-08): docs/marketing/cover.png (+ cover-1000.png) from the box
  *                                        template of the workspace (branding/box/box.json) with the logo and the name
@@ -108,6 +110,8 @@ function docs_main(array $argv): int
             return docs_cmd_marketing($ctx, $args);
         case 'cover':
             return docs_cmd_cover($ctx, $flags);
+        case 'logo':
+            return docs_cmd_logo($ctx, $args);
         case 'build':
             return docs_cmd_build($ctx, $flags);
         case 'mark-translated':

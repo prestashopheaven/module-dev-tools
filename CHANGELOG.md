@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.0] - 2026-10-20
+
+### Toegevoegd
+- `ps-module docs logo <bestand>`: het gekozen logo (MKT-07) wordt het logo van de module: `docs/content/logo.svg`
+  (of `.png`; de doos-cover gebruikt het) en `<module>/logo.png`, 512 x 512 met een transparante achtergrond, gerenderd
+  via Docker of Chrome. Bedoeld voor ná de keuze van de gebruiker en vóór `docs build`.
+
 ## [1.14.0] - 2026-10-20
 
 ### Toegevoegd

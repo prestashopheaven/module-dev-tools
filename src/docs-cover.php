@@ -477,3 +477,60 @@ function docs_cmd_cover(array $ctx, array $flags): int
 
     return 0;
 }
+
+/**
+ * ps-module docs logo <file>: makes the chosen logo (MKT-07) the module's logo: copies it to docs/content/logo.svg (or
+ * .png; the cover uses it) and renders <module>/logo.png, 512 x 512 with a transparent background, through the docs
+ * engines (Docker, else Chrome). Run it after the user picked one of the suggestions, before docs build.
+ *
+ * @param array<string, mixed> $ctx
+ * @param string[] $args
+ */
+function docs_cmd_logo(array $ctx, array $args): int
+{
+    $given = (string) ($args[0] ?? '');
+    $file = '';
+    foreach ([$given, $ctx['docs'] . '/' . $given, $ctx['repo'] . '/' . $given] as $candidate) {
+        if ($given !== '' && is_file($candidate)) {
+            $file = (string) realpath($candidate);
+            break;
+        }
+    }
+    $ext = strtolower(pathinfo($file, PATHINFO_EXTENSION));
+    if ($file === '' || !in_array($ext, ['svg', 'png'], true)) {
+        fwrite(STDERR, "ps-module docs logo: give the chosen logo (SVG or PNG), e.g. content/logo-suggestions/2-<idea>.svg\n");
+
+        return 2;
+    }
+    $content = $ctx['docs'] . '/content/logo.' . $ext;
+    foreach (['svg', 'png'] as $old) {
+        if (is_file($ctx['docs'] . "/content/logo.$old") && $old !== $ext) {
+            unlink($ctx['docs'] . "/content/logo.$old");
+        }
+    }
+    if (str_replace('\\', '/', $file) !== str_replace('\\', '/', (string) realpath($content))) {
+        copy($file, $content);
+    }
+    $stage = $ctx['repo'] . '/.cache/docs/logo';
+    @mkdir($stage, 0775, true);
+    copy($content, "$stage/logo.$ext");
+    file_put_contents("$stage/logo.html", '<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;width:512px;height:512px;overflow:hidden;background:transparent}img{display:block;width:512px;height:512px;object-fit:contain}</style></head><body><img alt="" src="logo.' . $ext . '"><script>const i=document.images[0];const done=()=>{document.body.dataset.ready=i.naturalWidth?"1":"0"};i.complete?done():(i.onload=i.onerror=done);</script></body></html>');
+    $out = "$stage/logo.png";
+    @unlink($out);
+    $frame = ['width' => 512, 'height' => 512, 'transparent' => true];
+    $todo = ['logo' => ['html' => "$stage/logo.html", 'out' => $out, 'hash' => '']];
+    $error = 'no engine';
+    foreach ((array) (docs_frame_config($ctx)['engines'] ?? ['docker', 'chrome']) as $engine) {
+        $result = $engine === 'docker' ? docs_frames_docker($ctx, $todo, $frame) : docs_frames_chrome($todo, $frame);
+        if (isset($result['logo']) && $result['logo']['ok']) {
+            copy($out, $ctx['module_dir'] . '/logo.png');
+            echo 'Logo: ' . docs_rel($ctx, $content) . ' -> ' . basename($ctx['module_dir']) . "/logo.png (512 x 512, transparent). The cover uses it; next: docs build.\n";
+
+            return 0;
+        }
+        $error = (string) ($result['error'] ?? $result['logo']['error'] ?? 'failed');
+    }
+    fwrite(STDERR, "ps-module docs logo: rendering logo.png failed: $error\n");
+
+    return 1;
+}

@@ -19,7 +19,7 @@ Ontwikkeltools voor PrestaShopHeaven-modules. Installeer als `require-dev`; alle
 | `ps-module context [--no-notes\|--generate\|--status]` | `<repo>/CONTEXT.md`: Notes (door Claude) + gegenereerd codeoverzicht; geïmporteerd door de `CLAUDE.md` van de repo |
 | `ps-module git <cmd>` | Git-werkwijze (GIT-01..07): `status [--remote]`, `start <naam> [--fix]`, `pr` (push + PR via `gh` of GitLab-MR), `finish` (na de merge opruimen), `later` |
 | `ps-module index` | `index.php` van de module in elke map zonder (niet in `vendor/`, volgt geen symlinks) |
-| `ps-module docs <cmd>` | Handleidingen (HTML + PDF), marketingteksten (Addons), screenshots en de doos-cover per taal in `<repo>/docs/`: `init`, `status`, `check`, `screenshots`, `frames`, `manual`, `marketing`, `cover`, `build`, `mark-translated`, `preview`, `doctor` |
+| `ps-module docs <cmd>` | Handleidingen (HTML + PDF), marketingteksten (Addons), screenshots en de doos-cover per taal in `<repo>/docs/`: `init`, `status`, `check`, `screenshots`, `frames`, `manual`, `marketing`, `logo` (gekozen logo -> `logo.png`), `cover`, `build`, `mark-translated`, `preview`, `doctor` |
 | `ps-module publish <cmd>` | Release-checklist per versie (REL-08): `status [--check]`, `site`, `docs` (docs-site via SFTP), `demo` (demowinkel via SSH), `vps-snapshot` (TransIP), `done addons`, `undo <stap>`. Zie "Publiceren" |
 | `ps-module demo-site <cmd>` | De demowinkel zelf (DEMO-01..07), ook buiten een module: `setup`, `config` (instellingen opnieuw toepassen: talen, inlog, cron), `status`, `snapshot`, `restore`, `test`, `nightly`, `demo-mode on\|off`, `settings`, `push <snapshot>`, `vps-snapshot`; `--env=<bestand>` voor een ander doel |
 | `ps-module status` | Welke stappen op de huidige code geslaagd zijn |
