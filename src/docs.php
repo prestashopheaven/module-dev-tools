@@ -27,6 +27,9 @@
  *                                        put the screenshots in the frame template of the module (docs/frame/):
  *                                        docs/framed/<iso>/<id>.png; --preview: pages to try template edits
  *   ps-module docs marketing [<iso>...]  render docs/marketing/<iso>/marketing.html, .md and .json
+ *   ps-module docs cover [--force] [--name=..] [--logo=..] [--bar=fit|full] [--stripes=under|none|over] [--out=..]
+ *                                        the box cover (MKT-08): docs/marketing/cover.png (+ cover-1000.png) from the box
+ *                                        template of the workspace (branding/box/box.json) with the logo and the name
  *   ps-module docs build [--no-screenshots] [--screenshots] [--keep]
  *                                        definition of done: check + screenshots (when out of date) + framed
  *                                        screenshots + manuals + PDF + marketing + docs/index.html; records 'docs'
@@ -53,6 +56,7 @@ require_once __DIR__ . '/docs-markdown.php';
 require_once __DIR__ . '/docs-render.php';
 require_once __DIR__ . '/docs-shots.php';
 require_once __DIR__ . '/docs-frames.php';
+require_once __DIR__ . '/docs-cover.php';
 
 const DOCS_RESOURCES = __DIR__ . '/../resources';
 const DOCS_TODO = '/\bTODO:/';
@@ -102,6 +106,8 @@ function docs_main(array $argv): int
             return docs_cmd_frames($ctx, $args, $flags);
         case 'marketing':
             return docs_cmd_marketing($ctx, $args);
+        case 'cover':
+            return docs_cmd_cover($ctx, $flags);
         case 'build':
             return docs_cmd_build($ctx, $flags);
         case 'mark-translated':
@@ -1407,6 +1413,15 @@ function docs_cmd_build(array $ctx, array $flags): int
     echo "\n-- Marketing --\n";
     foreach (docs_render_marketing_all($ctx, $ctx['languages']) as $iso => $file) {
         echo "  $iso  " . docs_rel($ctx, $file) . "\n";
+    }
+
+    echo "\n-- Box cover --\n";
+    $cover = docs_render_cover($ctx);
+    if ($cover['error'] !== '') {
+        $warnings[] = 'box cover not made: ' . $cover['error'];
+        echo '  not made: ' . $cover['error'] . "\n";
+    } else {
+        echo '  ' . ($cover['file'] !== '' ? docs_rel($ctx, $cover['file']) . ($cover['skipped'] !== '' ? ' (' . $cover['skipped'] . ')' : '') : 'skipped: ' . $cover['skipped']) . "\n";
     }
     foreach ($issues as $issue) {
         $warnings[] = ($issue['lang'] !== '*' ? $issue['lang'] . ': ' : '') . $issue['message'];

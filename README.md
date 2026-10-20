@@ -19,7 +19,7 @@ Ontwikkeltools voor PrestaShopHeaven-modules. Installeer als `require-dev`; alle
 | `ps-module context [--no-notes\|--generate\|--status]` | `<repo>/CONTEXT.md`: Notes (door Claude) + gegenereerd codeoverzicht; geïmporteerd door de `CLAUDE.md` van de repo |
 | `ps-module git <cmd>` | Git-werkwijze (GIT-01..07): `status [--remote]`, `start <naam> [--fix]`, `pr` (push + PR via `gh` of GitLab-MR), `finish` (na de merge opruimen), `later` |
 | `ps-module index` | `index.php` van de module in elke map zonder (niet in `vendor/`, volgt geen symlinks) |
-| `ps-module docs <cmd>` | Handleidingen (HTML + PDF), marketingteksten (Addons) en screenshots per taal in `<repo>/docs/`: `init`, `status`, `check`, `screenshots`, `frames`, `manual`, `marketing`, `build`, `mark-translated`, `preview`, `doctor` |
+| `ps-module docs <cmd>` | Handleidingen (HTML + PDF), marketingteksten (Addons), screenshots en de doos-cover per taal in `<repo>/docs/`: `init`, `status`, `check`, `screenshots`, `frames`, `manual`, `marketing`, `cover`, `build`, `mark-translated`, `preview`, `doctor` |
 | `ps-module publish <cmd>` | Release-checklist per versie (REL-08): `status [--check]`, `site`, `docs` (docs-site via SFTP), `demo` (demowinkel via SSH), `vps-snapshot` (TransIP), `done addons`, `undo <stap>`. Zie "Publiceren" |
 | `ps-module demo-site <cmd>` | De demowinkel zelf (DEMO-01..07), ook buiten een module: `setup`, `config` (instellingen opnieuw toepassen: talen, inlog, cron), `status`, `snapshot`, `restore`, `test`, `nightly`, `demo-mode on\|off`, `settings`, `push <snapshot>`, `vps-snapshot`; `--env=<bestand>` voor een ander doel |
 | `ps-module status` | Welke stappen op de huidige code geslaagd zijn |
@@ -119,6 +119,14 @@ en `docs/index.html`. Daarna staat de stap `docs` in de definition of done.
   Latijn/Cyrillisch/Grieks). Lukt niets, dan blijft de printklare HTML staan en meldt `build` dat.
 - `ps-module docs status` toont per taal precies welk bestand of veld ontbreekt of verouderd is;
   `ps-module docs preview <iso>` zet PDF-pagina's om naar PNG om het resultaat te bekijken.
+
+### Cover: de doos (`ps-module docs cover`)
+
+`docs/marketing/cover.png`: de productdoos van het merk met het logo en de naam van de module (MKT-08), gemaakt uit
+`branding/box/box.json` van de werkruimte (zie `branding/box/README.md`). Logo en naam worden met een CSS `matrix3d` op
+de perspectieffoto van de lege doos gezet. `docs.json > cover`: `name` (standaard de technische naam zonder `heaven`,
+in hoofdletters), `logo` (standaard de eerste logo-suggestie), `bar` (`fit`|`full`), `stripes` (`under`|`none`|`over`),
+`logo_area`, `enabled`. Varianten proberen: `ps-module docs cover --stripes=none --name=.. --out=..`.
 
 ### Screenshots in een frame (`ps-module docs frames`)
 

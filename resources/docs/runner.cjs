@@ -342,7 +342,7 @@ async function frames(browser, task, results) {
             }
             await page.evaluate(() => document.fonts.ready);
             fs.mkdirSync(path.dirname(item.out), { recursive: true });
-            await page.screenshot({ path: item.out, clip: { x: 0, y: 0, width: item.width, height: item.height } });
+            await page.screenshot({ path: item.out, clip: { x: 0, y: 0, width: item.width, height: item.height }, omitBackground: !!item.transparent });
             result.ok = true;
         } catch (e) {
             result.error = String(e && e.message ? e.message : e).split('\n')[0];

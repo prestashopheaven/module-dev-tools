@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.14.0] - 2026-10-20
+
+### Toegevoegd
+- `ps-module docs cover` (ook in `docs build`): de productdoos van het merk in perspectief met het logo en de naam van
+  de module (MKT-08): `docs/marketing/cover.png` (transparant) + `cover-1000.png`. De doos komt uit de werkruimte
+  (`branding/box/box.json`: sjablonen, naambalken, logovlak, gemeten hoekpunten); logo en naam worden met een CSS
+  `matrix3d` op de echte perspectieffoto gezet, zodat licht en schaduw van de doos blijven. Opties per module in
+  `docs.json > cover`: `name`, `logo`, `logo_area`, `bar` (`fit`|`full`), `stripes` (`under`|`none`|`over`), `enabled`.
+- `docs init` neemt het hoofdframe van de werkruimte over (`branding/frame/`: merkkleuren en fonts), met de
+  gebruikte fonts en afbeeldingen in `docs/frame/assets/`.
+- De frames-renderer kan transparante PNG's maken (Docker: `omitBackground`, Chrome: transparante achtergrond).
+
 ## [1.13.1] - 2026-10-20
 
 ### Opgelost

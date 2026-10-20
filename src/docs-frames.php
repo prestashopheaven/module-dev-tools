@@ -198,6 +198,11 @@ function docs_frame_create_template(array $ctx): array
 {
     $dir = docs_frame_dir($ctx);
     $created = [];
+    // The master frame of the workspace (branding/frame/, brand colours and fonts) wins over the built-in styles.
+    $master = docs_frame_master($ctx);
+    if ($master !== null && !is_file("$dir/frame.html") && !is_file("$dir/frame.css")) {
+        return docs_frame_copy_master($ctx, $master, $dir);
+    }
     $old = (array) ($ctx['config']['frame'] ?? []);
     $style = docs_frame_style_for((string) $ctx['module']);
     foreach (array_keys($style) as $key) {
@@ -238,6 +243,59 @@ function docs_frame_create_template(array $ctx): array
     }
 
     return $created;
+}
+
+/**
+ * The master frame of the workspace: branding/frame/ (frame.html + frame.css) in a parent directory of the
+ * repository; null when absent.
+ *
+ * @param array<string, mixed> $ctx
+ */
+function docs_frame_master(array $ctx): ?string
+{
+    for ($dir = (string) $ctx['repo'], $i = 0; $i < 5 && $dir !== dirname($dir); $dir = dirname($dir), ++$i) {
+        if (is_file("$dir/branding/frame/frame.html") && is_file("$dir/branding/frame/frame.css")) {
+            return str_replace('\\', '/', "$dir/branding/frame");
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Copies the master frame into docs/frame/: frame.html, frame.css (%%module%% filled in) and every file frame.css or
+ * frame.html refers to (fonts, images; also outside the master folder, e.g. ../font/Poppins/*.ttf), which land in
+ * docs/frame/assets/ with the references rewritten. Returns the created files.
+ *
+ * @param array<string, mixed> $ctx
+ *
+ * @return string[]
+ */
+function docs_frame_copy_master(array $ctx, string $master, string $dir): array
+{
+    if (!is_dir($dir)) {
+        mkdir($dir, 0775, true);
+    }
+    $created = [];
+    foreach (['frame.html' => false, 'frame.css' => true] as $file => $css) {
+        $text = str_replace('%%module%%', (string) $ctx['module'], (string) file_get_contents("$master/$file"));
+        foreach (docs_frame_references($text, $css) as [$match, $ref]) {
+            $source = realpath("$master/$ref");
+            if ($source === false || !is_file($source)) {
+                continue;
+            }
+            if (!is_dir("$dir/assets")) {
+                mkdir("$dir/assets", 0775, true);
+            }
+            copy($source, "$dir/assets/" . basename($source));
+            $text = str_replace($match, str_replace($ref, 'assets/' . basename($source), $match), $text);
+            $created[] = 'docs/frame/assets/' . basename($source);
+        }
+        file_put_contents("$dir/$file", $text);
+        $created[] = "docs/frame/$file (from the master frame " . $master . ')';
+    }
+
+    return array_values(array_unique($created));
 }
 
 /**
@@ -854,7 +912,7 @@ function docs_frames_docker(array $ctx, array $todo, array $frame): array
     $items = [];
     foreach ($todo as $item) {
         @mkdir(dirname($item['out']), 0775, true);
-        $items[] = ['html' => docs_container_path($ctx, $item['html']), 'out' => docs_container_path($ctx, $item['out']), 'width' => (int) $frame['width'], 'height' => (int) $frame['height']];
+        $items[] = ['html' => docs_container_path($ctx, $item['html']), 'out' => docs_container_path($ctx, $item['out']), 'width' => (int) $frame['width'], 'height' => (int) $frame['height'], 'transparent' => !empty($frame['transparent'])];
     }
     $run = docs_run_container($ctx, [['type' => 'frames', 'items' => $items]], null);
     if ($run['error'] !== '') {
@@ -896,6 +954,7 @@ function docs_frames_chrome(array $todo, array $frame): array
         [$code, $output] = docs_exec([
             $chrome, '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--disable-extensions',
             '--hide-scrollbars', '--force-device-scale-factor=1', '--user-data-dir=' . $profile, '--virtual-time-budget=10000',
+            ...(!empty($frame['transparent']) ? ['--default-background-color=00000000'] : []),
             '--window-size=' . (int) $frame['width'] . ',' . (int) $frame['height'], '--screenshot=' . $item['out'], docs_file_url($item['html']),
         ], 120);
         docs_remove_dir($profile);
