@@ -869,6 +869,24 @@ function context_section_docs(string $repoDir): array
 // Workspace overview (MODULES/CONTEXT.md)
 
 /**
+ * Directories of the module repos of the workspace: modules/<repo> (the layout since October 2026) and, for older
+ * layouts, <repo> directly in the workspace (not libraries/, modules/ or demo-site/).
+ *
+ * @return string[]
+ */
+function context_module_repos(string $projectDir): array
+{
+    $repos = glob($projectDir . '/modules/*', GLOB_ONLYDIR) ?: [];
+    foreach (glob($projectDir . '/*', GLOB_ONLYDIR) ?: [] as $dir) {
+        if (!in_array(basename($dir), ['libraries', 'modules', 'demo-site', 'docs', 'branding'], true)) {
+            $repos[] = $dir;
+        }
+    }
+
+    return array_map(static fn (string $dir): string => str_replace('\\', '/', $dir), $repos);
+}
+
+/**
  * Overview of a workspace with several module repos (e.g. MODULES/): every module with its version,
  * description, features and languages, the shared packages with their versions, and where the skill
  * lives. Deterministic, so the file only changes when a module or package changes.
@@ -888,7 +906,7 @@ function context_workspace(string $projectDir): string
         '|---|---|---|---|---|---|---|',
     ];
     $modules = 0;
-    foreach (glob($projectDir . '/*', GLOB_ONLYDIR) ?: [] as $repo) {
+    foreach (context_module_repos($projectDir) as $repo) {
         $repo = dod_norm($repo);
         $moduleDir = is_file("$repo/module.spec.json") ? dod_module_dir($repo) : null;
         if ($moduleDir === null) {

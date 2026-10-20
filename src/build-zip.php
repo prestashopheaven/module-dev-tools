@@ -12,7 +12,8 @@
  *     extra.prestashopheaven.scope is prefixed with extra.prestashopheaven.scope-prefix,
  *     in the module code and in vendor/. Two modules with different versions of the same
  *     package can then run side by side in one shop.
- *  4. add the manuals (<repo>/docs/manual/<iso>/readme_<iso>.pdf) as docs/readme_<iso>.pdf
+ *  4. add the manual of docs.json > zip_manuals (default: English) as docs/readme_<iso>.pdf; the manuals of all
+ *     languages go on the docs site (ps-module publish docs), so the zip stays small for Addons
  *  5. add index.php to every directory (also vendor/), zip with <module>/ as root
  */
 
@@ -92,10 +93,21 @@ if (is_file("$stage/composer.json")) {
 @unlink("$stage/composer.json");
 @unlink("$stage/composer.lock");
 
-// Manuals for Addons (REL-06): docs/readme_<iso>.pdf, made by `ps-module docs build`.
-foreach (glob(dirname($moduleDir) . '/docs/manual/*/readme_*.pdf') ?: [] as $pdf) {
-    @mkdir("$stage/docs", 0775, true);
-    copy($pdf, "$stage/docs/" . basename($pdf));
+// Manual for Addons (REL-06): docs/readme_<iso>.pdf, made by `ps-module docs build`. Only the languages of
+// docs.json > zip_manuals (default English, else the source language): every language in the zip made it too big
+// for uploads (33 languages: 45 MB). All languages are on the docs site (ps-module publish docs).
+$repoRoot = dirname($moduleDir);
+$docsConfig = is_file("$repoRoot/docs/docs.json") ? json_decode((string) file_get_contents("$repoRoot/docs/docs.json"), true) : null;
+$i18nConfig = is_file("$repoRoot/i18n.json") ? json_decode((string) file_get_contents("$repoRoot/i18n.json"), true) : null;
+$zipManuals = is_array($docsConfig) && isset($docsConfig['zip_manuals']) && is_array($docsConfig['zip_manuals'])
+    ? array_map('strval', $docsConfig['zip_manuals'])
+    : [is_file("$repoRoot/docs/manual/en/readme_en.pdf") ? 'en' : (string) ($i18nConfig['source'] ?? 'en')];
+foreach ($zipManuals as $iso) {
+    $pdf = "$repoRoot/docs/manual/$iso/readme_$iso.pdf";
+    if (is_file($pdf)) {
+        @mkdir("$stage/docs", 0775, true);
+        copy($pdf, "$stage/docs/readme_$iso.pdf");
+    }
 }
 
 addIndexFiles($stage, (string) file_get_contents("$moduleDir/index.php"));

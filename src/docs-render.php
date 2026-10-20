@@ -787,29 +787,69 @@ function docs_render_marketing_all(array $ctx, array $languages): array
 }
 
 /**
- * Copies the logo suggestion (docs/content/logo-suggestion.svg) to docs/marketing/ and renders a 512 px PNG of it.
+ * The logo suggestions of the module: docs/content/logo-suggestions/*.svg (MKT-07: several, in the brand colours of
+ * branding/brand.json), else the older single docs/content/logo-suggestion.svg.
  *
  * @param array<string, mixed> $ctx
  *
- * @return array{svg: string, png: string}
+ * @return string[] paths of the SVG files, sorted
+ */
+function docs_logo_sources(array $ctx): array
+{
+    $files = glob($ctx['docs'] . '/content/logo-suggestions/*.svg') ?: [];
+    sort($files);
+    if ($files === [] && is_file($ctx['docs'] . '/content/logo-suggestion.svg')) {
+        $files = [$ctx['docs'] . '/content/logo-suggestion.svg'];
+    }
+
+    return $files;
+}
+
+/**
+ * Copies the logo suggestions to docs/marketing/logo-suggestions/ and renders a 512 px PNG of each (in Docker).
+ *
+ * @param array<string, mixed> $ctx
+ *
+ * @return list<array{svg: string, png: string}>
  */
 function docs_render_logo(array $ctx): array
 {
-    $source = $ctx['docs'] . '/content/logo-suggestion.svg';
-    $dir = $ctx['docs'] . '/marketing';
-    if (!is_file($source)) {
-        return ['svg' => '', 'png' => ''];
+    $dir = $ctx['docs'] . '/marketing/logo-suggestions';
+    $sources = docs_logo_sources($ctx);
+    // Older builds wrote one logo-suggestion.svg/png next to the marketing sheets.
+    foreach (['svg', 'png'] as $ext) {
+        @unlink($ctx['docs'] . "/marketing/logo-suggestion.$ext");
+    }
+    if ($sources === []) {
+        return [];
     }
     @mkdir($dir, 0775, true);
-    $svg = "$dir/logo-suggestion.svg";
-    $png = "$dir/logo-suggestion.png";
-    $changed = !is_file($svg) || sha1_file($svg) !== sha1_file($source);
-    copy($source, $svg);
-    if (($changed || !is_file($png)) && docs_docker_available() === '' && docs_ensure_image()['error'] === '') {
-        docs_run_container($ctx, [['type' => 'svg-png', 'items' => [['in' => docs_container_path($ctx, $svg), 'out' => docs_container_path($ctx, $png), 'size' => 512]]]], null);
+    $keep = [];
+    $items = [];
+    $logos = [];
+    foreach ($sources as $source) {
+        $name = pathinfo($source, PATHINFO_FILENAME);
+        $svg = "$dir/$name.svg";
+        $png = "$dir/$name.png";
+        $keep[] = $svg;
+        $keep[] = $png;
+        $changed = !is_file($svg) || sha1_file($svg) !== sha1_file($source);
+        copy($source, $svg);
+        if ($changed || !is_file($png)) {
+            $items[] = ['in' => docs_container_path($ctx, $svg), 'out' => docs_container_path($ctx, $png), 'size' => 512];
+        }
+        $logos[] = ['svg' => $svg, 'png' => $png];
+    }
+    foreach (glob("$dir/*") ?: [] as $old) {
+        if (!in_array($old, $keep, true)) {
+            unlink($old);
+        }
+    }
+    if ($items !== [] && docs_docker_available() === '' && docs_ensure_image()['error'] === '') {
+        docs_run_container($ctx, [['type' => 'svg-png', 'items' => $items]], null);
     }
 
-    return ['svg' => $svg, 'png' => is_file($png) ? $png : ''];
+    return array_map(static fn (array $l): array => ['svg' => $l['svg'], 'png' => is_file($l['png']) ? $l['png'] : ''], $logos);
 }
 
 /**
@@ -844,7 +884,7 @@ function docs_marketing_values(array $ctx, array $data): array
  *
  * @param array<string, mixed> $ctx
  * @param array<string, mixed> $data
- * @param array{svg: string, png: string} $logo
+ * @param list<array{svg: string, png: string}> $logo
  */
 function docs_render_marketing(array $ctx, string $iso, array $data, array $logo): string
 {
@@ -965,7 +1005,7 @@ function docs_marketing_text(array $v): string
  * HTML of a marketing value (lists as lists, Markdown for the installation instructions, the logo image).
  *
  * @param array{value: mixed, type: string} $v
- * @param array{svg: string, png: string}|null $logo
+ * @param list<array{svg: string, png: string}>|null $logo
  */
 function docs_marketing_value_html(array $v, ?array $logo, string $dir): string
 {
@@ -984,8 +1024,8 @@ function docs_marketing_value_html(array $v, ?array $logo, string $dir): string
             . (str_contains(strtolower($v['question']), 'steps') ? '</ol>' : '</ul>');
     }
     $html = docs_md_render((string) $value, $noImages);
-    if ($logo !== null && $logo['svg'] !== '') {
-        $html = '<figure class="logo"><img src="' . docs_e(docs_relative_path($dir, $logo['png'] !== '' ? $logo['png'] : $logo['svg'])) . '" alt="Logo suggestion"></figure>' . $html;
+    foreach (array_reverse($logo ?? []) as $index => $one) {
+        $html = '<figure class="logo"><img src="' . docs_e(docs_relative_path($dir, $one['png'] !== '' ? $one['png'] : $one['svg'])) . '" alt="Logo suggestion ' . (count($logo ?? []) - $index) . '"></figure>' . $html;
     }
 
     return $html;

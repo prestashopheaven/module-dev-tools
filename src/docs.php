@@ -38,7 +38,8 @@
  *
  * Content (written by Claude): docs/content/<iso>/manual.md, docs/content/<iso>/marketing.json,
  * docs/content/<iso>/screenshots.json (captions on the frames), docs/docs.json > marketing (category, price,
- * benefits, multistore) and > frame (settings of the framed screenshots), docs/content/logo-suggestion.svg.
+ * benefits, multistore) and > frame (settings of the framed screenshots), docs/content/logo-suggestions/*.svg (3
+ * suggestions in the brand colours of branding/brand.json) and docs/content/logo-prompt.md (prompt for a new logo).
  * The module's frame template: docs/frame/frame.html + frame.css (+ images/fonts), created once by init and
  * then edited by hand only: no tool writes to docs/frame/.
  * Generated: docs/screenshots/<iso>/<id>.png, docs/framed/<iso>/<id>.png, docs/manual/<iso>/manual.html + readme_<iso>.pdf (the Addons name: ps-module build copies it to <module>/docs/),
@@ -554,14 +555,21 @@ function docs_validate_marketing_common(array $ctx, array $marketing, callable $
         $add('error', '*', $file, "marketing.multistore must be \"$required\": PrestaShopHeaven modules are always fully multistore compatible");
     }
 
-    $svg = $ctx['docs'] . '/content/logo-suggestion.svg';
-    if (is_file($svg)) {
+    // MKT-07: several logo suggestions in the brand colours, and a prompt for a new logo with those colours.
+    $logos = docs_logo_sources($ctx);
+    foreach ($logos as $svg) {
         $previous = libxml_use_internal_errors(true);
         $xml = simplexml_load_string((string) file_get_contents($svg));
         libxml_use_internal_errors($previous);
         if ($xml === false || strtolower($xml->getName()) !== 'svg') {
-            $add('error', '*', 'docs/content/logo-suggestion.svg', 'not a valid SVG document');
+            $add('error', '*', docs_rel($ctx, $svg), 'not a valid SVG document');
         }
+    }
+    if (count($logos) < 3) {
+        $add('warning', '*', 'docs/content/logo-suggestions/', count($logos) . ' logo suggestion(s): make 3, in the colours of branding/brand.json (MKT-07)');
+    }
+    if (!is_file($ctx['docs'] . '/content/logo-prompt.md')) {
+        $add('warning', '*', 'docs/content/logo-prompt.md', 'missing: the prompt for a new module logo, with the brand colours (MKT-07)');
     }
 }
 

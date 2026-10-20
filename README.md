@@ -11,7 +11,7 @@ Ontwikkeltools voor PrestaShopHeaven-modules. Installeer als `require-dev`; alle
 | `ps-module coverage` | De unit-tests voeren elke regel van `src/Domain`, `src/Application` en `src/Presenter` uit (TST-08; PCOV of Xdebug, Clover in `.cache/coverage/`). Draait ook in `ps-module check` |
 | `ps-module phpstan [versies]` | PHPStan tegen elke PS-versie uit `tests/phpstan/config.json` |
 | `ps-module validate [dir\|zip]` | Validator-precheck (regels live van validator.prestashop.com) |
-| `ps-module build` | `../dist/<module>.zip`: no-dev vendor, gescopete packages, `index.php` overal |
+| `ps-module build` | `../dist/<module>.zip`: no-dev vendor, gescopete packages, `index.php` overal, en de Engelse handleiding `docs/readme_en.pdf` (`docs.json > zip_manuals`) |
 | `ps-module validate-zip` | Validator-precheck van de release-zip |
 | `ps-module validator-api` | Zip naar validator.prestashop.com (`PRESTASHOP_VALIDATOR_API_KEY` in `.env`); de validator neemt max. 30 MB aan en krijgt daarom een tijdelijke kopie zonder de handleiding-PDF's (`docs/*.pdf`) |
 | `ps-module shops <cmd>` | Testwinkels in Docker: `doctor`, `run`, `up`, `down`, `integration`, `behat`, `upgrade`, `multistore` |
@@ -20,6 +20,8 @@ Ontwikkeltools voor PrestaShopHeaven-modules. Installeer als `require-dev`; alle
 | `ps-module git <cmd>` | Git-werkwijze (GIT-01..07): `status [--remote]`, `start <naam> [--fix]`, `pr` (push + PR via `gh` of GitLab-MR), `finish` (na de merge opruimen), `later` |
 | `ps-module index` | `index.php` van de module in elke map zonder (niet in `vendor/`, volgt geen symlinks) |
 | `ps-module docs <cmd>` | Handleidingen (HTML + PDF), marketingteksten (Addons) en screenshots per taal in `<repo>/docs/`: `init`, `status`, `check`, `screenshots`, `frames`, `manual`, `marketing`, `build`, `mark-translated`, `preview`, `doctor` |
+| `ps-module publish <cmd>` | Release-checklist per versie (REL-08): `status [--check]`, `site`, `docs` (docs-site via SFTP), `demo` (demowinkel via SSH), `vps-snapshot` (TransIP), `done addons`, `undo <stap>`. Zie "Publiceren" |
+| `ps-module demo-site <cmd>` | De demowinkel zelf (DEMO-01..07), ook buiten een module: `setup`, `config` (instellingen opnieuw toepassen: talen, inlog, cron), `status`, `snapshot`, `restore`, `test`, `nightly`, `demo-mode on\|off`, `settings`, `push <snapshot>`, `vps-snapshot`; `--env=<bestand>` voor een ander doel |
 | `ps-module status` | Welke stappen op de huidige code geslaagd zijn |
 | `ps-module skip <stap> "<reden>"` | Stap die echt niet kan draaien (wordt gemeld) |
 | `ps-module assets [status\|check\|build]` | JavaScript van de module (`<module>/_dev/`, `views/js/`): `build` = `npm ci` + `npm run build` (typecheck, lint, tests met 100 % dekking, esbuild bij TypeScript), `check` = bronnen, tests en `views/js` horen bij de laatste geslaagde run (zonder Node) + stempel |
@@ -143,6 +145,41 @@ handleidingen, de marketingbladen en `docs/index.html` gebruiken ze ook.
   zoals de handleiding (`docs mark-translated <iso> screenshots`).
 - Rendert in de docs-tools-image, anders met een lokale Chrome/Edge; alleen wat veranderd is
   (`docs/framed/manifest.json`), `--force` voor alles.
+
+## Publiceren (`ps-module publish`)
+
+Na een release (tag `v<versie>`) zijn er per versie drie stappen. `ps-module publish status` toont welke nog open
+staan (lokaal bijgehouden in `<repo>/.cache/publish/<versie>.json`):
+
+| Stap | Hoe |
+|---|---|
+| Addons-upload | Met de hand in het verkopersaccount (Addons heeft geen upload-API): `../dist/<module>.zip`, daarna `ps-module publish done addons` |
+| Docs-site | `ps-module publish docs`: bouwt `dist/docs-site/<module>/` (`index.php` met de taalkeuze + `readme_<iso>.pdf` van elke taal uit `i18n.json`) en zet die via SFTP in `<DOCS_SITE_SFTP_PATH>/<module>/` (oude bestanden daar gaan weg). Daarna controleert hij dat `<DOCS_SITE_URL>/<module>/index.php` de nieuwe versie toont (`<meta name="module-version">`) |
+| Demowinkel | `ps-module publish demo`: uploadt de gecontroleerde zip en `resources/publish/demo-install.php` via SFTP en draait dat via SSH in de root van de winkel: uitpakken naast `modules/<module>`, wisselen, `bin/console prestashop:module install` (nieuw) of `upgrade` (bestaand), `cache:clear`. Mislukt install/upgrade, dan komt de vorige versie terug. Eén demowinkel voor alle modules |
+
+`docs` en `demo` weigeren een versie zonder tag (behalve in CI of met `--force`); `--dry-run` toont wat er zou gebeuren.
+`publish site` bouwt alleen de map. De release-zip bevat alleen de Engelse handleiding (`docs.json > zip_manuals`,
+standaard `["en"]`), zodat hij klein blijft voor uploads.
+
+Instellingen uit de omgeving of de dichtstbijzijnde `.env` (nooit in git; in CI als secrets):
+`DOCS_SITE_URL`, `DOCS_SITE_SFTP_HOST`, `DOCS_SITE_SFTP_PORT` (22), `DOCS_SITE_SFTP_USER`, `DOCS_SITE_SFTP_PASSWORD` of
+`DOCS_SITE_SFTP_KEY` (pad naar een private key, of de key zelf; optioneel `DOCS_SITE_SFTP_KEY_PASSPHRASE`),
+`DOCS_SITE_SFTP_PATH` (map op de server die de root van `DOCS_SITE_URL` is); `DEMO_SITE_URL`, `DEMO_SITE_SSH_HOST`,
+`DEMO_SITE_SSH_PORT`, `DEMO_SITE_SSH_USER`, `DEMO_SITE_SSH_PASSWORD` of `DEMO_SITE_SSH_KEY` (+ `_KEY_PASSPHRASE`),
+`DEMO_SITE_PS_ROOT`, `DEMO_SITE_PHP` (php), `DEMO_SITE_TMP` (/tmp). SFTP/SSH via phpseclib (pure PHP, wachtwoord of key).
+De release-workflow van een module draait `publish docs` en `publish demo` zelf als die secrets bestaan.
+
+**Demowinkel** (`ps-module demo-site`, server-script `resources/publish/demo-site.sh`): één PrestaShop met alle
+modules, in demomodus. Elke nacht (cron op de server) gaat hij terug naar de laatste snapshot (bestanden + database)
+en volgt een rooktest. `publish demo` zet eerst de laatste snapshot terug (schone winkel), installeert of upgradet,
+test en maakt dan een nieuwe snapshot; faalt iets, dan komt de vorige terug. Na elke restore of deploy zet
+`demo-settings.php` de vaste instellingen: e-mail uit, de demo-medewerker (`DEMO_SITE_EMAIL`/`_PASSWORD`, standaard
+demo@demo.com / demodemo) en de introductiepagina `/<DEMO_SITE_INTRO_PATH>/` (standaard `start`) met links naar de
+winkel en de backoffice (inlog ingevuld) en de modules. `demo-site push <map>` maakt een elders gemaakte snapshot
+(de lokale Docker-kopie) die van de server; de server houdt zijn eigen `parameters.php`, domein en `.htaccess` volgen
+`DEMO_SITE_URL`. **TransIP:** `publish vps-snapshot` (en automatisch na een deploy) maakt een snapshot van de hele VPS
+via de API (`TRANSIP_LOGIN`, `TRANSIP_PRIVATE_KEY`, `TRANSIP_VPS_NAME`, `TRANSIP_SNAPSHOT_KEEP`); bij "Snapshot limit
+reached" gaat eerst de oudste weg. De sleutel hoort nooit op de VPS.
 
 ## Gedeelde configuratie
 

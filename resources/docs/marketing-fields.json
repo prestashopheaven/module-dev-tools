@@ -22,7 +22,7 @@
       "type": "text",
       "min": 60,
       "max": 800,
-      "hint": "A concept for the logo (Addons: square PNG, 512 x 512 recommended): symbol, colours, style. Optionally draw it in docs/content/logo-suggestion.svg."
+      "hint": "A concept for the logo (Addons: square PNG, 512 x 512 recommended): symbol, colours, style. Draw 3 suggestions in docs/content/logo-suggestions/*.svg in the brand colours (branding/brand.json of the workspace) and write the prompt for a new logo in docs/content/logo-prompt.md."
     },
     "price": {
       "question": "Price (excl. tax, EUR)",

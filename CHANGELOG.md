@@ -1,5 +1,40 @@
 # Changelog
 
+## [1.13.0] - 2026-10-20
+
+### Toegevoegd
+- `ps-module publish`: de release-checklist per versie (REL-08). `status [--check]` toont welke stappen open staan;
+  `docs` bouwt de docs-site (`dist/docs-site/<module>/`: `index.php` met taalkeuze + de PDF-handleiding van elke taal) en
+  zet die via SFTP op de server (`DOCS_SITE_*`), met een controle van de live pagina; `demo` installeert of upgradet de
+  gecontroleerde zip in de demowinkel via SSH (`DEMO_SITE_*`: `bin/console prestashop:module install|upgrade`,
+  `cache:clear`, terug naar de vorige versie bij een fout); `done addons` vinkt de handmatige Addons-upload af; `site`
+  bouwt alleen de map. `docs` en `demo` publiceren alleen een versie met tag (of in CI, of met `--force`).
+- `ps-module demo-site`: de demowinkel (één PrestaShop met alle modules, ook buiten een module-repo):
+  `setup` (gereedschap uploaden, `demo-site.conf`, demomodus, eerste snapshot, nachtelijke cron), `status`, `snapshot`,
+  `restore`, `test`, `nightly`, `demo-mode on|off`, `push <snapshot>` (een lokaal gemaakte snapshot wordt die van de
+  server) en `vps-snapshot`. Op de server: `resources/publish/demo-site.sh` (snapshots van bestanden + database,
+  elke nacht terug + rooktest, deploy = schone winkel → install/upgrade → test → nieuwe snapshot, terug bij een fout;
+  de server houdt zijn eigen `parameters.php`, domein en `.htaccess` volgen de URL), `demo-install.php` en
+  `demo-settings.php` (e-mail uit, demo-medewerker, introductiepagina met links naar winkel en backoffice met de
+  inlog ingevuld en de modules met hun handleiding).
+- `ps-module publish vps-snapshot`: TransIP-snapshot van de hele VPS via de REST-API v6 (`TRANSIP_*`), automatisch na
+  `publish docs`/`demo`/`demo-site push` (behalve met `--no-snapshot`). De sleutel staat nooit op de VPS.
+- `--env=<bestand>`: instellingen van een ander doel (de lokale Docker-demo). `DEMO_SITE_*`, `DOCS_SITE_*` en
+  `TRANSIP_*` komen dan alleen uit dat bestand.
+- Logo's (MKT-07): `docs/content/logo-suggestions/*.svg` (meerdere suggesties) komen als PNG op het marketingblad;
+  `docs check` waarschuwt bij minder dan drie suggesties of zonder `docs/content/logo-prompt.md`. Het oude losse
+  `logo-suggestion.svg` werkt nog.
+- `resources/languages.json`: `native`, de naam van elke taal in die taal (voor taalkeuzes).
+- Nieuwe dependency `phpseclib/phpseclib` ^3.0 (SFTP/SSH in pure PHP, met wachtwoord of key).
+
+### Gewijzigd
+- `ps-module link` zoekt de map `libraries/` zelf (ook vanuit `modules/<repo>/<module>`: `../../../libraries/*`);
+  `unlink` en `verify` herkennen elk aantal `../`. Het werkruimte-overzicht (`context`) leest de module-repo's in
+  `modules/` en, voor de oude indeling, direct in de werkruimte.
+- `ps-module build` zet alleen de Engelse handleiding in de zip (`docs/readme_en.pdf`; ander keuze via
+  `docs/docs.json > zip_manuals`). Met alle talen werd de zip te groot voor uploads (33 talen: 45 MB); de handleidingen
+  van alle talen staan op de docs-site (`ps-module publish docs`).
+
 ## [1.12.1] - 2026-10-20
 
 ### Opgelost

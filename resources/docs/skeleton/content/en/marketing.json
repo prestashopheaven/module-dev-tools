@@ -5,7 +5,7 @@
         "language": "en"
     },
     "description": "{{DESCRIPTION}} TODO: 2-5 short paragraphs for merchants: what the module does, why they want it, what makes it better than the alternatives (300-4000 characters).",
-    "logo_suggestion": "TODO: a concept for the square logo: symbol, colours, style (and optionally draw it in docs/content/logo-suggestion.svg).",
+    "logo_suggestion": "TODO: a concept for the square logo: symbol, colours, style (draw 3 suggestions in docs/content/logo-suggestions/ in the brand colours, prompt in docs/content/logo-prompt.md).",
     "features": [
         "TODO: one feature per item, benefit first, with the words merchants search for",
         "TODO: feature 2",

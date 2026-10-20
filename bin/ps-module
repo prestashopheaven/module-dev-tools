@@ -37,12 +37,17 @@
  *   ps-module translations <command> extract | status | todo | apply | fill | auto | accept | prune | mails-ok | build | check
  *   ps-module docs <command>         init | status | check | screenshots | frames | manual | marketing | build | mark-translated | preview | doctor:
  *                                    manuals (HTML + PDF), Addons marketing texts, screenshots and framed screenshots in docs/
+ *   ps-module publish <command>      status [--check] | site | docs | demo | done addons | undo <step>:
+ *                                    release checklist per version (REL-08): Addons upload (by hand), docs site with the
+ *                                    PDF manuals of every language (SFTP), install/upgrade in the demo shop (SSH)
+ *   ps-module demo-site <command>    setup | status | snapshot | restore | test | nightly: the demo shop (one shop for
+ *                                    all modules), reset to its snapshot and tested every night (resources/publish/demo-site.sh)
  *   ps-module git <command>          status [--remote] | start <name> [--fix] | pr | finish | later:
  *                                    feature branches, commit, push, pull/merge request, merge, clean up (GIT-01..07)
  *   ps-module context [--no-notes|--generate|--status]
  *                                    <repo>/CONTEXT.md: regenerate the overview and record that the Notes match the code
  *   ps-module index                  add the module's index.php to every directory that lacks one (not vendor/, never via symlinks)
- *   ps-module link | unlink          use the local ../../libraries/* (symlinked) instead of Packagist, and back
+ *   ps-module link | unlink          use the local libraries/* of the workspace (symlinked) instead of Packagist, and back
  */
 
 declare(strict_types=1);
@@ -124,6 +129,14 @@ switch ($command) {
         requireModule($moduleDir);
         exit(script('docs.php', array_merge([(string) $moduleDir], $args), (string) $repoDir));
 
+    case 'publish':
+        requireModule($moduleDir);
+        exit(script('publish.php', array_merge([(string) $moduleDir], $args), (string) $repoDir));
+
+    case 'demo-site':
+        // The demo shop is not part of a module: also runs outside a module repo (e.g. in MODULES/demo-site).
+        exit(script('publish.php', array_merge([(string) ($moduleDir ?? getcwd()), 'demo-site'], $args), (string) ($repoDir ?? getcwd())));
+
     case 'status':
         requireRepo($repoDir);
         $status = dod_status($repoDir);
@@ -160,17 +173,18 @@ switch ($command) {
         exit(0);
 
     case 'link':
-        // Local library development: use ../../libraries/* (symlinked) instead of Packagist.
+        // Local library development: use the workspace's libraries/* (symlinked) instead of Packagist.
         requireModule($moduleDir);
+        $librariesUrl = librariesPathRepository((string) $moduleDir);
         $composerFile = $moduleDir . '/composer.json';
         $composer = json_decode((string) file_get_contents($composerFile), true);
         $composer['repositories'] = array_values(array_filter(
             $composer['repositories'] ?? [],
-            static fn (array $r): bool => ($r['url'] ?? '') !== '../../libraries/*'
+            static fn (array $r): bool => !isLibrariesRepository((string) ($r['url'] ?? ''))
         ));
-        array_unshift($composer['repositories'], ['type' => 'path', 'url' => '../../libraries/*', 'options' => ['symlink' => true]]);
+        array_unshift($composer['repositories'], ['type' => 'path', 'url' => $librariesUrl, 'options' => ['symlink' => true]]);
         file_put_contents($composerFile, json_encode($composer, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
-        echo "ps-module: linked ../../libraries/*. Run 'ps-module unlink' before you commit (CI uses Packagist).\n";
+        echo "ps-module: linked $librariesUrl. Run 'ps-module unlink' before you commit (CI uses Packagist).\n";
         exit(updateLibraries((string) $moduleDir));
 
     case 'unlink':
@@ -179,7 +193,7 @@ switch ($command) {
         $composer = json_decode((string) file_get_contents($composerFile), true);
         $composer['repositories'] = array_values(array_filter(
             $composer['repositories'] ?? [],
-            static fn (array $r): bool => ($r['url'] ?? '') !== '../../libraries/*'
+            static fn (array $r): bool => !isLibrariesRepository((string) ($r['url'] ?? ''))
         ));
         if ($composer['repositories'] === []) {
             unset($composer['repositories']);
@@ -196,7 +210,7 @@ switch ($command) {
     case 'verify':
         requireModule($moduleDir);
         $repos = json_decode((string) file_get_contents($moduleDir . '/composer.json'), true)['repositories'] ?? [];
-        if (in_array('../../libraries/*', array_column($repos, 'url'), true)) {
+        if (array_filter(array_column($repos, 'url'), static fn ($url): bool => isLibrariesRepository((string) $url)) !== []) {
             fwrite(STDERR, "ps-module verify: local libraries are linked. Run 'ps-module unlink' first: CI and releases use Packagist.
 ");
             exit(1);
@@ -276,6 +290,30 @@ function requireRepo(?string $repoDir): void
         fwrite(STDERR, "ps-module: no module repository found (module.spec.json).\n");
         exit(2);
     }
+}
+
+/**
+ * Relative path repository from the module directory to the workspace's libraries/*: the nearest parent directory
+ * with libraries/module-dev-tools (modules/<repo>/<module> gives ../../../libraries/*, <repo>/<module> ../../libraries/*).
+ */
+function librariesPathRepository(string $moduleDir): string
+{
+    $up = '';
+    for ($dir = dod_norm($moduleDir); $dir !== dirname($dir); $dir = dirname($dir), $up .= '../') {
+        if (is_file("$dir/libraries/module-dev-tools/composer.json") && $up !== '') {
+            return $up . 'libraries/*';
+        }
+    }
+    fwrite(STDERR, "ps-module link: no libraries/module-dev-tools found in a parent directory of the module.\n");
+    exit(1);
+}
+
+/**
+ * True for the path repository that ps-module link adds (any number of ../ followed by libraries/*).
+ */
+function isLibrariesRepository(string $url): bool
+{
+    return preg_match('#^(\.\./)+libraries/\*$#', $url) === 1;
 }
 
 /**
