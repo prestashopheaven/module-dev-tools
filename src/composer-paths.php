@@ -14,6 +14,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/verbose.php';
+
 /**
  * Makes relative path repositories (e.g. ../../libraries/*) absolute in the composer.json
  * and composer.lock of a copy of the module, so composer can still find them when the
@@ -38,6 +40,7 @@ function rewritePathRepositories(string $moduleDir, string $stage): void
     foreach ($composer['repositories'] ?? [] as $i => $repository) {
         if (($repository['type'] ?? '') === 'path') {
             $composer['repositories'][$i]['url'] = $absolute($repository['url']);
+            ps_vlog("composer.json: path repository {$repository['url']} -> {$composer['repositories'][$i]['url']} (no symlink)");
             $composer['repositories'][$i]['options']['symlink'] = false;
         }
     }
@@ -49,6 +52,7 @@ function rewritePathRepositories(string $moduleDir, string $stage): void
             foreach ($lock[$section] ?? [] as $i => $package) {
                 if (($package['dist']['type'] ?? '') === 'path') {
                     $lock[$section][$i]['dist']['url'] = $absolute($package['dist']['url']);
+                    ps_vlog("composer.lock: {$package['name']} path {$package['dist']['url']} -> {$lock[$section][$i]['dist']['url']}");
                     $lock[$section][$i]['transport-options'] = ['symlink' => false, 'relative' => false];
                 }
             }

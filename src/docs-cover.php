@@ -33,6 +33,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/verbose.php';
+
 /**
  * The box template of the workspace: branding/box/box.json in a parent directory of the repository; null when absent.
  *
@@ -50,10 +52,12 @@ function docs_cover_box(array $ctx): ?array
     foreach ($candidates as $file) {
         if (is_file($file)) {
             $config = json_decode((string) file_get_contents($file), true);
+            ps_vlog("box template: $file" . ($file === $override ? ' (PS_DOCS_BOX)' : '') . (is_array($config) ? '' : ': invalid JSON'));
 
             return is_array($config) ? ['dir' => str_replace('\\', '/', dirname((string) realpath($file))), 'config' => $config] : null;
         }
     }
+    ps_vlog('box template: none (looked for ' . implode(', ', $candidates) . ')');
 
     return null;
 }
@@ -292,6 +296,7 @@ function docs_render_cover(array $ctx, bool $force = false, array $overrides = [
     }
     $box = $found['config'];
     $s = docs_cover_settings($ctx, $box, $overrides);
+    ps_vlog('cover: name "' . $s['name'] . '", logo ' . ($s['logo'] !== '' ? 'docs/' . $s['logo'] : '(none)') . ', bar ' . $s['bar'] . ', stripes ' . $s['stripes'] . ', logo area ' . implode(',', $s['logo_area']) . ($overrides !== [] ? ' (command line: ' . implode(', ', array_keys($overrides)) . ')' : ''));
     if (!$s['enabled']) {
         return ['file' => '', 'skipped' => 'docs.json > cover.enabled is false', 'error' => ''];
     }
@@ -325,8 +330,11 @@ function docs_render_cover(array $ctx, bool $force = false, array $overrides = [
     $hash = sha1($html . sha1_file($path((string) $box['perspective'])) . ($logo !== '' ? sha1_file($logo) : '') . sha1_file($path((string) $box['font']['file'])) . ($files['stripes'] !== '' ? sha1_file("$stage/stripes.png") : ''));
     $manifest = $ctx['repo'] . '/.cache/docs/cover-' . sha1($out) . '.hash';
     if (!$force && is_file($out) && is_file($manifest) && trim((string) file_get_contents($manifest)) === $hash) {
+        ps_vlog("cover: $out is up to date (same input hash), skipped");
+
         return ['file' => $out, 'skipped' => 'up to date', 'error' => ''];
     }
+    ps_vlog("cover: to render, $out (" . ($force ? 'forced' : (!is_file($out) ? 'not there yet' : 'input changed')) . "), staged in $stage");
     $page = "$stage/cover-" . substr(sha1($out), 0, 8) . '.html';
     file_put_contents($page, $html);
     [$W, $H] = $box['size'];
@@ -335,14 +343,17 @@ function docs_render_cover(array $ctx, bool $force = false, array $overrides = [
     $engines = (array) (docs_frame_config($ctx)['engines'] ?? ['docker', 'chrome']);
     $error = 'no engine';
     foreach ($engines as $engine) {
+        ps_vlog("cover engine $engine: trying");
         $result = $engine === 'docker' ? docs_frames_docker($ctx, $todo, $frame) : docs_frames_chrome($todo, $frame);
         if (isset($result['cover']) && $result['cover']['ok']) {
             file_put_contents($manifest, $hash);
             docs_cover_small($out, 1000);
+            ps_vlog("cover: wrote $out via $engine");
 
             return ['file' => $out, 'skipped' => '', 'error' => ''];
         }
         $error = (string) ($result['error'] ?? $result['cover']['error'] ?? 'failed');
+        ps_vlog("cover engine $engine: failed ($error)");
     }
 
     return ['file' => '', 'skipped' => '', 'error' => $error];
@@ -361,8 +372,11 @@ function docs_cover_erase_bar(string $stage, array $box): bool
     $out = "$stage/perspective-fit.png";
     $key = sha1(sha1_file($in) . json_encode($box['side']));
     if (is_file($out) && is_file("$out.key") && trim((string) file_get_contents("$out.key")) === $key) {
+        ps_vlog("cover: $out is cached (side bar already removed)");
+
         return true;
     }
+    ps_vlog("cover: removing the side name bar, $in -> $out");
     $im = @imagecreatefrompng($in);
     if ($im === false) {
         return false;
@@ -447,6 +461,7 @@ function docs_cover_small(string $file, int $width): void
     imagefill($small, 0, 0, imagecolorallocatealpha($small, 0, 0, 0, 127));
     imagecopyresampled($small, $im, 0, 0, 0, 0, $width, $height, imagesx($im), imagesy($im));
     imagepng($small, (string) preg_replace('/\.png$/', "-$width.png", $file));
+    ps_vlog('cover: wrote ' . preg_replace('/\.png$/', "-$width.png", $file) . " ($width x $height)");
 }
 
 /**
@@ -497,6 +512,7 @@ function docs_cmd_logo(array $ctx, array $args): int
         }
     }
     $ext = strtolower(pathinfo($file, PATHINFO_EXTENSION));
+    ps_vlog("logo: given '$given', found " . ($file !== '' ? $file : '(nothing; looked as given, in docs/ and in the repository)'));
     if ($file === '' || !in_array($ext, ['svg', 'png'], true)) {
         fwrite(STDERR, "ps-module docs logo: give the chosen logo (SVG or PNG), e.g. content/logo-suggestions/2-<idea>.svg\n");
 
@@ -521,14 +537,17 @@ function docs_cmd_logo(array $ctx, array $args): int
     $todo = ['logo' => ['html' => "$stage/logo.html", 'out' => $out, 'hash' => '']];
     $error = 'no engine';
     foreach ((array) (docs_frame_config($ctx)['engines'] ?? ['docker', 'chrome']) as $engine) {
+        ps_vlog("logo engine $engine: rendering $stage/logo.html -> $out");
         $result = $engine === 'docker' ? docs_frames_docker($ctx, $todo, $frame) : docs_frames_chrome($todo, $frame);
         if (isset($result['logo']) && $result['logo']['ok']) {
             copy($out, $ctx['module_dir'] . '/logo.png');
+            ps_vlog('logo: copied to ' . $ctx['module_dir'] . '/logo.png');
             echo 'Logo: ' . docs_rel($ctx, $content) . ' -> ' . basename($ctx['module_dir']) . "/logo.png (512 x 512, transparent). The cover uses it; next: docs build.\n";
 
             return 0;
         }
         $error = (string) ($result['error'] ?? $result['logo']['error'] ?? 'failed');
+        ps_vlog("logo engine $engine: failed ($error)");
     }
     fwrite(STDERR, "ps-module docs logo: rendering logo.png failed: $error\n");
 

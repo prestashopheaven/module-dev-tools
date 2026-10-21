@@ -25,6 +25,8 @@
  *         and tests/phpstan/phpstan.neon.
  */
 
+require_once __DIR__ . '/verbose.php';
+
 $moduleDir = rtrim(str_replace('\\', '/', (string) getcwd()), '/');
 $config = json_decode((string) file_get_contents($moduleDir . '/tests/phpstan/config.json'), true);
 $phpstan = $moduleDir . '/vendor/bin/phpstan';
@@ -46,6 +48,10 @@ $paths = array_filter(
     $config['paths'] ?? [basename($moduleDir) . '.php', 'src', 'controllers', 'classes', 'upgrade', 'override', 'tests/Unit', 'tests/Integration'],
     static fn (string $path): bool => file_exists($moduleDir . '/' . $path)
 );
+ps_vlog('phpstan: ' . (getenv('_PS_ROOT_DIR_') ? 'only _PS_ROOT_DIR_ (env)' : 'PrestaShop ' . implode(', ', array_keys($runs))
+    . (array_slice($argv, 1) !== [] ? ' (from the command line)' : ' (from tests/phpstan/config.json)')
+    . ', cache dir ' . (getenv('PS_CACHE_DIR') ? getenv('PS_CACHE_DIR') . ' (env PS_CACHE_DIR)' : ($config['cache_dir'] ?? '?') . ' (config.json)')));
+ps_vlog('phpstan: paths ' . implode(', ', $paths) . (isset($config['paths']) ? ' (config.json)' : ' (default list, existing ones only)'));
 
 chdir($moduleDir);
 $failed = false;
@@ -71,7 +77,11 @@ foreach ($runs as $label => $root) {
     $cmd = escapeshellarg(PHP_BINARY) . ' -d memory_limit=2G ' . escapeshellarg($phpstan)
         . ' analyse --no-progress --configuration=' . escapeshellarg($wrapper)
         . ' ' . implode(' ', array_map('escapeshellarg', $paths));
+    ps_vlog("phpstan: PrestaShop $label in $root, result cache $tmpDir, config $wrapper");
+    ps_vcmd($cmd, $moduleDir);
+    $start = microtime(true);
     passthru($cmd, $code);
+    ps_vdone("phpstan (PrestaShop $label)", $start, $code);
     if ($code !== 0) {
         $failed = true;
     }

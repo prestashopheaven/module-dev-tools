@@ -20,6 +20,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/composer-paths.php';
+require_once __DIR__ . '/verbose.php';
 
 const EXCLUDE = [
     // directories (matched against path segments)
@@ -53,8 +54,11 @@ $version = $m[1];
 $work = str_replace('\\', '/', sys_get_temp_dir()) . '/ps_build_' . uniqid();
 $stage = "$work/$name";
 mkdir($stage, 0775, true);
+ps_vlog("build: $name $version from $moduleDir, stage $stage");
 
+$buildStart = microtime(true);
 copyFiltered($moduleDir, $stage);
+ps_vdone('build: copy to the stage', $buildStart);
 
 if (is_file("$stage/composer.json")) {
     rewritePathRepositories($moduleDir, $stage);
@@ -68,8 +72,13 @@ if (is_file("$stage/composer.json")) {
         fwrite(STDERR, "No composer.lock: building without require-dev.
 ");
     }
-    $cmd = 'composer install --no-dev --optimize-autoloader --no-interaction --no-progress --quiet --working-dir=' . escapeshellarg($stage);
+    // Verbose: composer's own output too (no --quiet).
+    $quiet = ps_verbose() ? '' : ' --quiet';
+    $cmd = 'composer install --no-dev --optimize-autoloader --no-interaction --no-progress' . $quiet . ' --working-dir=' . escapeshellarg($stage);
+    ps_vcmd($cmd, (string) getcwd());
+    $start = microtime(true);
     passthru($cmd, $code);
+    ps_vdone('composer install --no-dev', $start, $code);
     if ($code !== 0) {
         fwrite(STDERR, "composer install --no-dev failed\n");
         exit(1);
@@ -78,10 +87,15 @@ if (is_file("$stage/composer.json")) {
     $composer = json_decode((string) file_get_contents("$stage/composer.json"), true);
     $scopes = $composer['extra']['prestashopheaven']['scope'] ?? [];
     $prefix = (string) ($composer['extra']['prestashopheaven']['scope-prefix'] ?? '');
+    ps_vlog('build: scope ' . ($scopes !== [] && $prefix !== '' ? implode(', ', $scopes) . " under $prefix" : 'none (no extra.prestashopheaven.scope / scope-prefix in composer.json)'));
     if ($scopes !== [] && $prefix !== '') {
         $changed = scopeNamespaces($stage, $prefix, $scopes);
         fwrite(STDERR, "Scoped " . implode(', ', $scopes) . " under $prefix ($changed files)\n");
-        passthru('composer dump-autoload --optimize --no-dev --no-interaction --quiet --working-dir=' . escapeshellarg($stage), $code);
+        $cmd = 'composer dump-autoload --optimize --no-dev --no-interaction' . $quiet . ' --working-dir=' . escapeshellarg($stage);
+        ps_vcmd($cmd, (string) getcwd());
+        $start = microtime(true);
+        passthru($cmd, $code);
+        ps_vdone('composer dump-autoload', $start, $code);
         if ($code !== 0) {
             fwrite(STDERR, "composer dump-autoload failed after scoping\n");
             exit(1);
@@ -107,6 +121,9 @@ foreach ($zipManuals as $iso) {
     if (is_file($pdf)) {
         @mkdir("$stage/docs", 0775, true);
         copy($pdf, "$stage/docs/readme_$iso.pdf");
+        ps_vlog("build: manual $pdf -> docs/readme_$iso.pdf (" . round(filesize($pdf) / 1024) . ' KB)');
+    } else {
+        ps_vlog("build: no manual $pdf (made by ps-module docs build), left out");
     }
 }
 
@@ -122,11 +139,24 @@ fwrite(STDERR, "Building $name $version\n");
 $zip = new ZipArchive();
 $zip->open($zipPath, ZipArchive::CREATE | ZipArchive::OVERWRITE);
 $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($stage, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::SELF_FIRST);
+$zipFiles = 0;
+$zipBytes = 0;
 foreach ($it as $item) {
     $relative = $name . '/' . substr(str_replace('\\', '/', $item->getPathname()), strlen($stage) + 1);
     $item->isDir() ? $zip->addEmptyDir($relative) : $zip->addFile($item->getPathname(), $relative);
+    if (!$item->isDir()) {
+        ++$zipFiles;
+        $zipBytes += (int) $item->getSize();
+    }
 }
 $zip->close();
+if (ps_verbose()) {
+    $packages = array_map(static fn (string $d): string => substr(str_replace('\\', '/', $d), strlen("$stage/vendor/")), glob("$stage/vendor/*/*", GLOB_ONLYDIR) ?: []);
+    $packages = array_values(array_filter($packages, static fn (string $p): bool => !str_starts_with($p, 'composer/')));
+    ps_vlog(sprintf('build: %s: %d file(s), %.1f MB uncompressed, %.1f MB zipped', $zipPath, $zipFiles, $zipBytes / 1048576, ((int) filesize($zipPath)) / 1048576));
+    ps_vlog('build: vendor packages: ' . ($packages !== [] ? implode(', ', $packages) : 'none'));
+    ps_vlog('build: scoped: ' . (isset($scopes, $prefix) && $scopes !== [] && $prefix !== '' ? implode(', ', $scopes) . " under $prefix" : 'nothing'));
+}
 
 removeTree($work);
 
@@ -136,6 +166,7 @@ if (is_file(__DIR__ . '/dod.php')) {
     $repoDir = dod_repo_dir($moduleDir);
     if ($repoDir !== null) {
         file_put_contents($zipPath . '.json', json_encode(['fingerprint' => dod_fingerprint($repoDir), 'version' => $version, 'built' => date('c')], JSON_PRETTY_PRINT) . "\n");
+        ps_vlog("build: source fingerprint written to $zipPath.json (validate-zip and validator-api check the zip against it)");
     }
 }
 
@@ -168,6 +199,7 @@ function scopeNamespaces(string $stage, string $prefix, array $scopes): int
     }
 
     $changed = 0;
+    $perPart = [];
     $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($stage, FilesystemIterator::SKIP_DOTS));
     foreach ($it as $file) {
         $path = str_replace('\\', '/', $file->getPathname());
@@ -189,7 +221,13 @@ function scopeNamespaces(string $stage, string $prefix, array $scopes): int
             }
             file_put_contents($path, $new);
             ++$changed;
+            // Verbose summary per package (vendor/<a>/<b>), or "module" for the module's own files.
+            $where = str_starts_with($relative, 'vendor/') ? implode('/', array_slice(explode('/', $relative), 0, 3)) : 'module';
+            $perPart[$where] = ($perPart[$where] ?? 0) + 1;
         }
+    }
+    foreach ($perPart as $where => $count) {
+        ps_vlog("build: scoped $count file(s) in $where");
     }
 
     return $changed;
@@ -246,11 +284,18 @@ function isExcluded(string $relative): bool
 function copyFiltered(string $source, string $target): void
 {
     $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($source, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::SELF_FIRST);
+    $copied = 0;
+    $left = [];
     foreach ($it as $item) {
         $relative = substr(str_replace('\\', '/', $item->getPathname()), strlen($source) + 1);
         if (isExcluded($relative)) {
+            // Verbose: only the top of what is left out, not every file inside an excluded folder.
+            if (dirname($relative) === '.' || !isExcluded(dirname($relative))) {
+                $left[] = $relative . ($item->isDir() ? '/' : '');
+            }
             continue;
         }
+        $copied += $item->isDir() ? 0 : 1;
         $dest = "$target/$relative";
         if ($item->isDir()) {
             @mkdir($dest, 0775, true);
@@ -259,6 +304,7 @@ function copyFiltered(string $source, string $target): void
             copy($item->getPathname(), $dest);
         }
     }
+    ps_vlog("build: copied $copied file(s); left out: " . ($left !== [] ? implode(', ', $left) : 'nothing'));
 }
 
 /**
@@ -273,11 +319,14 @@ function addIndexFiles(string $root, string $content): void
             $dirs[] = $item->getPathname();
         }
     }
+    $added = 0;
     foreach ($dirs as $dir) {
         if (!is_file("$dir/index.php")) {
             file_put_contents("$dir/index.php", $content);
+            ++$added;
         }
     }
+    ps_vlog('build: index.php added to ' . $added . ' of ' . count($dirs) . ' folder(s)');
 }
 
 /**

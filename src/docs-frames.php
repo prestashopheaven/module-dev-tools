@@ -28,6 +28,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/verbose.php';
+
 const DOCS_FRAME_DEFAULTS = [
     'enabled' => true,
     'width' => 1600,
@@ -201,10 +203,13 @@ function docs_frame_create_template(array $ctx): array
     // The master frame of the workspace (branding/frame/, brand colours and fonts) wins over the built-in styles.
     $master = docs_frame_master($ctx);
     if ($master !== null && !is_file("$dir/frame.html") && !is_file("$dir/frame.css")) {
+        ps_vlog("frame template: copying the master frame $master into $dir");
+
         return docs_frame_copy_master($ctx, $master, $dir);
     }
     $old = (array) ($ctx['config']['frame'] ?? []);
     $style = docs_frame_style_for((string) $ctx['module']);
+    ps_vlog('frame template: ' . (is_file("$dir/frame.html") && is_file("$dir/frame.css") ? "$dir exists, kept" : 'built-in template, starting style "' . $style['style'] . '"' . ($master !== null ? " (master frame $master not used: docs/frame/ is partly there)" : ' (no branding/frame/ found)')));
     foreach (array_keys($style) as $key) {
         if (is_string($old[$key] ?? null) && trim($old[$key]) !== '' && !preg_match('/[<>{};]|url\s*\(/i', $old[$key])) {
             $style[$key] = trim($old[$key]);
@@ -753,6 +758,7 @@ function docs_render_frames(array $ctx, array $languages, array $only = [], bool
     $items = (array) ($manifest['items'] ?? []);
     $shots = array_values(array_filter((array) ($ctx['config']['screenshots'] ?? []), 'is_array'));
     $jobDir = $ctx['repo'] . '/.cache/docs/frames';
+    ps_vlog('frames: ' . $frame['width'] . 'x' . $frame['height'] . ', caption ' . $frame['caption'] . ', engines ' . implode(' > ', (array) $frame['engines']) . '; languages ' . implode(' ', $languages) . ($only !== [] ? '; only ' . implode(',', $only) : '') . ($force ? '; --force' : ''));
     @mkdir($jobDir, 0775, true);
     $todo = [];
     $warnings = [];
@@ -784,8 +790,10 @@ function docs_render_frames(array $ctx, array $languages, array $only = [], bool
             $out = $ctx['docs'] . "/framed/$iso/$id.png";
             if (!$force && ($items[$key] ?? '') === $hash && is_file($out)) {
                 ++$unchanged;
+                ps_vlog("frame $key: unchanged, skipped ($out)");
                 continue;
             }
+            ps_vlog("frame $key: to render from $image" . ($caption['fallback'] !== '' ? " (caption of {$caption['fallback']})" : '') . ', ' . ($force ? '--force' : (is_file($out) ? 'input changed' : 'not there yet')));
             $htmlFile = "$jobDir/" . str_replace('/', '-', $key) . '.html';
             file_put_contents($htmlFile, $html);
             $todo[$key] = ['html' => $htmlFile, 'out' => $out, 'hash' => $hash];
@@ -795,6 +803,7 @@ function docs_render_frames(array $ctx, array $languages, array $only = [], bool
     foreach (glob($ctx['docs'] . '/framed/*/*.png') ?: [] as $old) {
         $key = basename(dirname($old)) . '/' . basename($old, '.png');
         if (!isset($current[$key]) && $only === []) {
+            ps_vlog("frame $key: removed (no such screenshot or language any more)");
             @unlink($old);
             unset($items[$key]);
         }
@@ -803,11 +812,15 @@ function docs_render_frames(array $ctx, array $languages, array $only = [], bool
     $error = '';
     if ($todo !== []) {
         foreach ((array) $frame['engines'] as $candidate) {
+            ps_vlog("frames engine $candidate: trying for " . count($todo) . ' frame(s)');
+            $start = microtime(true);
             $result = $candidate === 'docker' ? docs_frames_docker($ctx, $todo, $frame) : docs_frames_chrome($todo, $frame);
             if (isset($result['error'])) {
                 $error .= ($error !== '' ? '; ' : '') . "$candidate: {$result['error']}";
+                ps_vlog("frames engine $candidate: not usable, next engine ({$result['error']})");
                 continue;
             }
+            ps_vdone("frames engine $candidate", $start);
             $engine = (string) $candidate;
             foreach ($result as $key => $state) {
                 if ($state['ok']) {
@@ -880,6 +893,7 @@ function docs_preview_frames(array $ctx, array $languages, array $only = []): ar
             }
             $file = "$dir/$iso-$id.html";
             file_put_contents($file, docs_frame_html($local, $iso, $shot, $image, docs_caption($local, $iso, $shot), $n + 1, count($list), $frame, $template, true));
+            ps_vlog("frame preview $iso/$id: wrote $file");
             $files[] = $file;
         }
     }
@@ -951,6 +965,7 @@ function docs_frames_chrome(array $todo, array $frame): array
         @mkdir(dirname($item['out']), 0775, true);
         @unlink($item['out']);
         $profile = sys_get_temp_dir() . '/ps-docs-chrome-' . uniqid();
+        ps_vlog("frame $key (chrome): {$item['html']} -> {$item['out']}");
         [$code, $output] = docs_exec([
             $chrome, '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--disable-extensions',
             '--hide-scrollbars', '--force-device-scale-factor=1', '--user-data-dir=' . $profile, '--virtual-time-budget=10000',
@@ -974,8 +989,10 @@ function docs_frame_size_ok(string $file, array $frame): bool
 {
     clearstatcache(true, $file);
     $size = is_file($file) ? @getimagesize($file) : false;
+    $ok = $size !== false && $size[0] === (int) $frame['width'] && $size[1] === (int) $frame['height'];
+    ps_vlog("$file: " . ($size === false ? 'no image' : $size[0] . 'x' . $size[1] . ($ok ? ', ok' : ', expected ' . (int) $frame['width'] . 'x' . (int) $frame['height'])));
 
-    return $size !== false && $size[0] === (int) $frame['width'] && $size[1] === (int) $frame['height'];
+    return $ok;
 }
 
 /**

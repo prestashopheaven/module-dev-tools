@@ -24,6 +24,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/verbose.php';
+
 /** Largest upload validator.prestashop.com accepts (30 MB; HTTP 413 above it). */
 const VALIDATOR_MAX_BYTES = 30 * 1024 * 1024;
 
@@ -50,6 +52,9 @@ if (!extension_loaded('curl')) {
 $env = loadEnv(is_dir($target) ? $target : dirname($target));
 $apiKey = getenv('PRESTASHOP_VALIDATOR_API_KEY') ?: ($env['PRESTASHOP_VALIDATOR_API_KEY'] ?? '');
 $baseUrl = rtrim(getenv('PRESTASHOP_VALIDATOR_URL') ?: ($env['PRESTASHOP_VALIDATOR_URL'] ?? 'https://validator.prestashop.com'), '/');
+// Never shown in verbose output.
+ps_vsecret((string) $apiKey);
+ps_vlog('validator-api: target ' . $target . ', API ' . $baseUrl . ', key ' . ($apiKey === '' ? 'missing' : 'from ' . (getenv('PRESTASHOP_VALIDATOR_API_KEY') ? 'the environment' : 'a .env file')));
 if ($apiKey === '') {
     fwrite(STDERR, "No API key. Set PRESTASHOP_VALIDATOR_API_KEY in a .env file (module dir or a parent dir) or as an environment variable.\n");
     exit(2);
@@ -59,7 +64,12 @@ if ($apiKey === '') {
 if (is_dir($target)) {
     $buildScript = __DIR__ . '/build-zip.php';
     $output = [];
-    exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($buildScript) . ' ' . escapeshellarg($target), $output, $code);
+    $cmd = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($buildScript) . ' ' . escapeshellarg($target);
+    ps_vcmd($cmd, (string) getcwd());
+    $start = microtime(true);
+    exec($cmd, $output, $code);
+    ps_vdone('build-zip.php', $start, $code);
+    ps_vlog(implode("\n", $output));
     if ($code !== 0) {
         fwrite(STDERR, "Building the zip failed:\n" . implode("\n", $output) . "\n");
         exit(2);
@@ -104,6 +114,9 @@ $fields = [
 foreach ($majors as $major) {
     $fields['compatibility_' . $major] = 'true';
 }
+ps_vlog(sprintf('validator-api: POST %s/api/modules (multipart: archive=%s %.1f MB, key=***, %s)', $baseUrl, basename($zip), filesize($upload) / 1048576,
+    implode(', ', array_map(static fn (string $m): string => "compatibility_$m=true", $majors))));
+$start = microtime(true);
 
 $ch = curl_init($baseUrl . '/api/modules');
 curl_setopt_array($ch, [
@@ -117,6 +130,7 @@ curl_setopt_array($ch, [
 $body = curl_exec($ch);
 $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
 $error = curl_error($ch);
+ps_vdone("validator-api: HTTP $status, " . ($body === false ? "no body ($error)" : strlen((string) $body) . ' bytes'), $start);
 // Release the upload file now: on Windows an open handle keeps the temporary copy (and its directory) in place.
 unset($ch, $fields);
 
@@ -126,6 +140,7 @@ if ($body === false) {
 }
 $reportFile = preg_replace('/\.zip$/i', '', $zip) . '.validator.json';
 file_put_contents($reportFile, $body);
+ps_vlog("validator-api: raw response saved to $reportFile");
 
 $data = json_decode((string) $body, true);
 if ($status >= 400 || !is_array($data)) {
@@ -158,7 +173,11 @@ if ($errors === 0 && is_file(__DIR__ . '/dod.php')) {
     $repoDir = dod_repo_dir(dirname($zip));
     if ($repoDir !== null && is_array($meta) && isset($meta['fingerprint'])) {
         dod_stamp($repoDir, 'validator-api', $meta['fingerprint']);
+    } else {
+        ps_vlog('validator-api: no stamp: ' . ($repoDir === null ? 'no module repository above the zip' : "no fingerprint in $zip.json (zip not made by ps-module build)"));
     }
+} else {
+    ps_vlog("validator-api: no stamp: $errors error(s) reported");
 }
 
 exit($errors > 0 ? 1 : 0);
@@ -185,6 +204,7 @@ function uploadCopyWithoutPdfs(string $zip): ?string
         }
     }
     $za->close();
+    ps_vlog(sprintf('validator-api: zip %s, %.1f MB, %d manual PDF(s) in docs/', $zip, filesize($zip) / 1048576, count($pdfs)));
     if ($pdfs === []) {
         return $zip;
     }
@@ -254,11 +274,14 @@ function detectMajors(?string $moduleDir, string $zip): array
         }
     }
     if (!preg_match("/'min'\s*=>\s*'(\d+)\./", $code, $min)) {
+        ps_vlog('validator-api: no ps_versions_compliancy min in the main file: PrestaShop 9 only');
+
         return ['9'];
     }
     $minMajor = max(8, (int) $min[1]);
     $maxMajor = preg_match("/'max'\s*=>\s*'(\d+)\./", $code, $max) ? (int) $max[1] : 9;
     $maxMajor = max($minMajor, min(9, $maxMajor));
+    ps_vlog("validator-api: ps_versions_compliancy min {$min[1]}.x, max " . ($max[1] ?? '(none)') . ".x: majors $minMajor..$maxMajor (between 8 and 9)");
 
     return array_map('strval', range($minMajor, $maxMajor));
 }

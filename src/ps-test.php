@@ -39,6 +39,7 @@
 
 require_once __DIR__ . '/dod.php';
 require_once __DIR__ . '/composer-paths.php';
+require_once __DIR__ . '/verbose.php';
 require_once __DIR__ . '/ps-multistore.php';
 
 $repoRoot = dod_repo_dir((string) getcwd());
@@ -58,9 +59,19 @@ $moduleDir = ROOT . '/' . $module;
 $configPrefix = strtoupper($module);
 
 $argvRest = array_slice($argv, 1);
+// -v / --verbose also works when this script is started directly (ps-module strips it and sets the variable).
+if (array_intersect($argvRest, ['-v', '--verbose']) !== []) {
+    $argvRest = array_values(array_diff($argvRest, ['-v', '--verbose']));
+    putenv('PS_MODULE_VERBOSE=1');
+}
 $flags = array_values(array_filter($argvRest, static fn (string $a): bool => str_starts_with($a, '--')));
 $args = array_values(array_filter($argvRest, static fn (string $a): bool => !str_starts_with($a, '--')));
 $command = array_shift($args) ?? 'help';
+ps_vlog("shops $command: arguments " . json_encode($args) . ', flags ' . json_encode($flags) . ', repository ' . ROOT);
+ps_vlog('testing.json: module ' . $module . ', versions ' . implode(', ', (array) $config['versions'])
+    . ', suites ' . json_encode($config['suites'] ?? []) . ', upgrade_from ' . ($config['upgrade_from'] ?? 'none')
+    . ', multistore ' . json_encode($config['multistore'] ?? false) . ', db_image ' . ($config['db_image'] ?? 'mysql:8.0')
+    . ', base_port ' . ($config['base_port'] ?? 8000));
 
 switch ($command) {
     case 'doctor':
@@ -76,6 +87,7 @@ switch ($command) {
         if ($code === 0 && $full) {
             dod_stamp(ROOT, 'shop-tests', null, 'PrestaShop ' . implode(', ', $args ?: $config['versions']));
         }
+        ps_vlog('definition-of-done stamp shop-tests: ' . ($code === 0 && $full ? 'written' : ($code !== 0 ? 'not written (a step failed)' : 'not written (not every version, or a suite was skipped)')));
         exit($code);
     case 'up':
         requireDocker();
@@ -125,6 +137,7 @@ switch ($command) {
     case 'down':
         requireDocker();
         $versions = ($args[0] ?? 'all') === 'all' ? $config['versions'] : [$args[0]];
+        ps_vlog('stopping the shops of PrestaShop ' . implode(', ', $versions));
         foreach ($versions as $version) {
             (new Shop($version, $config))->down();
         }
@@ -156,6 +169,8 @@ final class Shop
         $parts = array_map('intval', explode('.', $version));
         $this->port = (int) ($config['base_port'] ?? 8000) + $parts[0] * 100 + $parts[1] * 10 + ($parts[2] ?? 0);
         $this->project = $config['module'] . '-ps' . str_replace('.', '', $version);
+        ps_vlog("shop PrestaShop $version: port {$this->port}, compose project {$this->project}, database image "
+            . ($config['db_image'] ?? 'mysql:8.0') . ', compose file ' . COMPOSE_FILE);
     }
 
     /**
@@ -171,9 +186,14 @@ final class Shop
         }
         $this->compose('up -d', true);
         out('Waiting for the PrestaShop installation (first run downloads the image; can take several minutes)...');
+        $start = microtime(true);
         $deadline = time() + 1200;
+        $attempt = 0;
         while (time() < $deadline) {
+            ++$attempt;
+            ps_vlog(sprintf('waiting for PrestaShop %s: check %d (%ds of at most 1200s)', $this->version, $attempt, (int) (microtime(true) - $start)));
             if ($this->isReady()) {
+                ps_vdone("PrestaShop {$this->version} installation", $start);
                 out('Shop is ready.');
 
                 return;
@@ -197,9 +217,15 @@ final class Shop
     public function isReady(): bool
     {
         $status = httpStatus("http://localhost:{$this->port}/");
+        if (!in_array($status, [200, 301, 302], true)) {
+            ps_vlog("not ready: the front page answers HTTP $status");
 
-        return in_array($status, [200, 301, 302], true)
-            && $this->exec('test -f /var/www/html/app/config/parameters.php && echo ok')['output'] === 'ok';
+            return false;
+        }
+        $installed = $this->exec('test -f /var/www/html/app/config/parameters.php && echo ok')['output'] === 'ok';
+        ps_vlog($installed ? 'ready: front page answers and app/config/parameters.php exists' : 'not ready: app/config/parameters.php does not exist yet');
+
+        return $installed;
     }
 
     /** Copies a module directory into the shop (replacing what is there). */
@@ -207,11 +233,15 @@ final class Shop
     {
         $name = $this->config['module'];
         $stage = sys_get_temp_dir() . '/ps-test-' . uniqid() . '/' . $name;
+        $start = microtime(true);
+        ps_vlog("deploy to PrestaShop {$this->version}: copying $sourceDir to $stage (without .git, .cache, node_modules, dist)");
         copyDir($sourceDir, $stage, ['.git', '.cache', 'node_modules', 'dist']);
+        ps_vlog("deploy: replacing /var/www/html/modules/$name in the container");
         $this->exec("rm -rf /var/www/html/modules/$name", 'root');
         $this->compose('cp ' . escapeshellarg($stage) . ' ' . escapeshellarg("prestashop:/var/www/html/modules/$name"));
         $this->exec("chown -R www-data:www-data /var/www/html/modules/$name", 'root');
         removeDir(dirname($stage));
+        ps_vdone("deploy of $name", $start);
     }
 
     /**
@@ -222,6 +252,7 @@ final class Shop
     public function console(string $action): array
     {
         $name = $this->config['module'];
+        ps_vlog("module $action: $name on PrestaShop {$this->version}");
         $result = $this->exec("cd /var/www/html && php -d memory_limit=1G bin/console prestashop:module $action $name 2>&1");
         // PS 8.1: right after the first install in a fresh shop, the compiled containers can
         // still miss the module's services. Empty the cache; the next request rebuilds it.
@@ -229,6 +260,7 @@ final class Shop
         // PrestaShop prints "<Action> action on module <name> succeeded." on success. Other
         // output (e.g. PHP warnings from the Docker image in dev mode) is not a failure.
         $ok = $result['code'] === 0 && preg_match('/\bsucceeded\b/i', $result['output']) === 1;
+        ps_vlog("module $action " . ($ok ? 'succeeded' : 'FAILED') . ', bin/console said:' . "\n" . vIndent(lastLines($result['output'], 30)));
 
         return ['ok' => $ok, 'output' => $result['output']];
     }
@@ -240,12 +272,25 @@ final class Shop
      */
     public function snapshot(): array
     {
+        ps_vlog('snapshot: copying ps-probe.php into the container (/tmp/ps-probe.php) and running it');
         $this->compose('cp ' . escapeshellarg(__DIR__ . '/ps-probe.php') . ' prestashop:/tmp/ps-probe.php');
         $result = $this->exec('php /tmp/ps-probe.php ' . escapeshellarg($this->config['module']) . ' ' . escapeshellarg(strtoupper($this->config['module'])));
         $data = json_decode($result['output'], true);
         if (!is_array($data)) {
             fail("Snapshot failed:\n" . $result['output']);
         }
+        ps_vlog(sprintf(
+            'snapshot: installed %s, version %s, active %s, %d hook(s), %d configuration key(s), %d tab(s), %d override(s), %d table(s), enabled in shops %s',
+            json_encode($data['installed'] ?? null),
+            json_encode($data['version'] ?? null),
+            json_encode($data['active'] ?? null),
+            count((array) ($data['hooks'] ?? [])),
+            count((array) ($data['configuration'] ?? [])),
+            count((array) ($data['tabs'] ?? [])),
+            count((array) ($data['overrides'] ?? [])),
+            count((array) ($data['tables'] ?? [])),
+            json_encode($data['module_shops'] ?? [])
+        ));
 
         return $data;
     }
@@ -258,6 +303,7 @@ final class Shop
     public function smoke(): array
     {
         $problems = [];
+        ps_vlog("front-office smoke test of PrestaShop {$this->version}: home, cart, category 3-clothes");
         // Home, cart and a category of the demo data. Use the friendly URL: in dev mode a
         // non-canonical URL (index.php?id_category=...) only returns a "page has moved" stub.
         foreach (['/', '/index.php?controller=cart', '/3-clothes'] as $path) {
@@ -292,6 +338,7 @@ final class Shop
         $admin = "$base/admin-dev/index.php";
         $jar = tempnam(sys_get_temp_dir(), 'psbo');
         $problems = [];
+        ps_vlog("back-office smoke test of PrestaShop {$this->version}: logging in as demo@prestashop.com (configuration page: " . ($configurable ? 'yes' : 'no') . ')');
 
         [, $loginPage, $loginUrl] = curlRequest($admin . '?controller=AdminLogin', $jar);
         $fields = hiddenInputs($loginPage);
@@ -320,6 +367,7 @@ final class Shop
         }
         // Product edit page: /products-v2/ on PS 8, /products/ on PS 9.
         $pages['product edit page'] = [$symfony('/sell/catalog/products-v2/1/edit'), $symfony('/sell/catalog/products/1/edit')];
+        ps_vlog('back office: logged in; pages to check: ' . implode(', ', array_keys($pages)));
 
         foreach ($pages as $label => $urls) {
             if ($urls === null) {
@@ -358,6 +406,7 @@ final class Shop
     public function integration(): array
     {
         $name = $this->config['module'];
+        ps_vlog("integration suite (PHPUnit, testsuite integration) in /var/www/html/modules/$name of PrestaShop {$this->version}");
         $result = $this->exec("cd /var/www/html/modules/$name && _PS_ROOT_DIR_=/var/www/html php vendor/bin/phpunit --bootstrap tests/Integration/bootstrap.php --testsuite integration --colors=never 2>&1");
         out($result['output']);
 
@@ -373,13 +422,15 @@ final class Shop
     {
         $dir = ROOT . '/tests/behat';
         if (!is_dir("$dir/vendor")) {
-            passthru('composer install --no-interaction --no-progress --working-dir=' . escapeshellarg($dir), $code);
+            ps_vlog("behat: $dir/vendor is missing, installing the Behat dependencies");
+            runShown('composer install --no-interaction --no-progress --working-dir=' . escapeshellarg($dir));
         }
         $baseUrl = "http://localhost:{$this->port}";
+        ps_vlog("behat: $dir/behat.yml against $baseUrl (PS_BASE_URL and BEHAT_PARAMS base_url)");
         putenv("PS_BASE_URL=$baseUrl");
         // Overrides base_url from behat.yml for every context.
         putenv('BEHAT_PARAMS=' . json_encode(['extensions' => ['Behat\\MinkExtension' => ['base_url' => $baseUrl]]]));
-        exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg("$dir/vendor/bin/behat") . ' --config=' . escapeshellarg("$dir/behat.yml") . ' --no-colors 2>&1', $lines, $code);
+        $code = runCaptured(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg("$dir/vendor/bin/behat") . ' --config=' . escapeshellarg("$dir/behat.yml") . ' --no-colors 2>&1', $lines);
         out(implode("\n", $lines));
 
         return ['ok' => $code === 0, 'output' => lastLines(implode("\n", $lines), 15)];
@@ -390,20 +441,47 @@ final class Shop
      */
     public function upload(string $localFile, string $containerPath): void
     {
+        ps_vlog("upload: $localFile -> container $containerPath");
         $this->compose('cp ' . escapeshellarg($localFile) . ' ' . escapeshellarg('prestashop:' . $containerPath));
     }
 
     /**
      * Runs a shell command inside the PrestaShop container and returns exit code and output.
+     * In verbose mode the container gets PS_MODULE_VERBOSE=1 too; the verbose lines of the scripts
+     * there (on their STDERR) are shown and kept out of the output.
      *
      * @return array{code: int, output: string}
      */
     public function exec(string $shell, string $user = 'www-data'): array
     {
-        $cmd = $this->composeCmd('exec -T -u ' . $user . ' prestashop sh -c ' . escapeshellarg($shell));
-        exec($cmd . ' 2>&1', $lines, $code);
+        if (!ps_verbose()) {
+            $cmd = $this->composeCmd('exec -T -u ' . $user . ' prestashop sh -c ' . escapeshellarg($shell));
+            exec($cmd . ' 2>&1', $lines, $code);
 
-        return ['code' => $code, 'output' => trim(implode("\n", $lines))];
+            return ['code' => $code, 'output' => trim(implode("\n", $lines))];
+        }
+        $cmd = $this->composeCmd('exec -T -e PS_MODULE_VERBOSE=1 -u ' . $user . ' prestashop sh -c ' . escapeshellarg($shell));
+        // STDERR to a file instead of 2>&1: then a verbose line can never end up in the middle of the output.
+        $errFile = (string) tempnam(sys_get_temp_dir(), 'psexec');
+        ps_vcmd($cmd);
+        $start = microtime(true);
+        exec($cmd . ' 2>' . escapeshellarg($errFile), $lines, $code);
+        $other = [];
+        foreach (preg_split('/\R/', (string) @file_get_contents($errFile)) ?: [] as $line) {
+            if (preg_match('/^\[v [\d:]+\] (.*)$/', $line, $m)) {
+                ps_vlog('  container: ' . $m[1]);
+            } elseif ($line !== '') {
+                $other[] = $line;
+            }
+        }
+        @unlink($errFile);
+        ps_vdone('docker compose exec', $start, $code);
+        $output = trim(implode("\n", array_merge($lines, $other)));
+        if ($code !== 0 && $output !== '') {
+            ps_vlog("output:\n" . vIndent(lastLines($output, 20)));
+        }
+
+        return ['code' => $code, 'output' => $output];
     }
 
     /**
@@ -413,9 +491,12 @@ final class Shop
     {
         $cmd = $this->composeCmd($args);
         if ($show) {
-            passthru($cmd, $code);
+            $code = runShown($cmd);
         } else {
-            exec($cmd . ' 2>&1', $lines, $code);
+            $code = runCaptured($cmd . ' 2>&1', $lines);
+            if ($lines !== []) {
+                ps_vlog("output:\n" . vIndent(implode("\n", $lines)));
+            }
         }
         if ($code !== 0) {
             fail("docker compose $args failed" . (isset($lines) ? ":\n" . implode("\n", $lines) : '.'));
@@ -447,10 +528,17 @@ function runMatrix(array $versions, array $flags): int
     $suites = $config['suites'];
     $all = [];
 
+    ps_vlog('run: PrestaShop ' . implode(', ', $versions) . '; integration ' . vWhy(!empty($suites['integration']), '--skip-integration', $flags)
+        . ', behat ' . vWhy(!empty($suites['behat']), '--skip-behat', $flags)
+        . ', upgrade ' . vWhy(($config['upgrade_from'] ?? 'none') !== 'none', '--skip-upgrade', $flags)
+        . ', multistore ' . (multistoreWanted($config, $flags) ? 'yes' : 'no')
+        . ', shops ' . (in_array('--keep', $flags, true) ? 'kept running (--keep)' : 'removed afterwards'));
+
     // The release zip is what merchants install: test it too (scoped vendor/, no dev files).
     $zip = buildReleaseZip($moduleDir);
 
     foreach ($versions as $version) {
+        $versionStart = microtime(true);
         $shop = new Shop($version, $config);
         $results = [];
         $shop->up();
@@ -486,6 +574,7 @@ function runMatrix(array $versions, array $flags): int
             $shop->down();
         }
         $all[$version] = $results;
+        ps_vdone("PrestaShop $version (" . count(array_filter(array_column($results, 'ok'))) . ' of ' . count($results) . ' steps OK)', $versionStart);
     }
 
     out("\n================ RESULT ================");
@@ -515,12 +604,14 @@ function upgradeTests(Shop $shop, array $fresh): array
     if (($config['upgrade_from'] ?? 'all') === 'previous') {
         $tags = array_slice($tags, -1, 1, true);
     }
+    ps_vlog("upgrade tests to $current (upgrade_from " . ($config['upgrade_from'] ?? 'all') . '): from ' . ($tags === [] ? 'nothing (no earlier release tags)' : implode(', ', array_keys($tags))));
     if ($tags === []) {
         return ['upgrade' => ['ok' => true, 'output' => 'skipped: no earlier release tags']];
     }
 
     foreach ($tags as $tag => $version) {
         $label = "upgrade $version -> $current";
+        ps_vlog("$label: uninstall, install $tag, deploy the current code, upgrade, compare with a fresh install");
         $shop->console('uninstall');
         $old = exportRelease($tag);
         if ($old === null) {
@@ -555,8 +646,21 @@ function upgradeTests(Shop $shop, array $fresh): array
  */
 function buildReleaseZip(string $moduleDir): ?string
 {
-    exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/build-zip.php') . ' ' . escapeshellarg($moduleDir) . ' 2>&1', $lines, $code);
-    $zip = trim((string) end($lines));
+    ps_vlog('building the release zip (build-zip.php) for the release-zip test');
+    $code = runCaptured(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/build-zip.php') . ' ' . escapeshellarg($moduleDir) . ' 2>&1', $lines);
+    // build-zip.php inherits PS_MODULE_VERBOSE: its verbose lines (2>&1) are passed on as they are and
+    // kept out of the output, whose last line is the path of the zip.
+    $plain = [];
+    foreach ($lines as $line) {
+        if (preg_match('/^\[v [\d:]+\] /', $line)) {
+            fwrite(STDERR, $line . "\n");
+        } else {
+            $plain[] = $line;
+        }
+    }
+    ps_vlog("build-zip.php output:\n" . vIndent(implode("\n", $plain)));
+    $zip = trim((string) end($plain));
+    ps_vlog('release zip: ' . ($code === 0 && is_file($zip) ? $zip : 'build FAILED'));
 
     return $code === 0 && is_file($zip) ? $zip : null;
 }
@@ -577,6 +681,7 @@ function releaseZipTest(Shop $shop, ?string $zip, array $fresh): array
         return ['release zip' => ['ok' => false, 'output' => 'Building the release zip failed (ps-module build).']];
     }
     $work = str_replace('\\', '/', sys_get_temp_dir()) . '/ps-zip-' . uniqid();
+    ps_vlog("release zip test: extracting $zip to $work");
     $za = new ZipArchive();
     $za->open($zip);
     $za->extractTo($work);
@@ -592,6 +697,7 @@ function releaseZipTest(Shop $shop, ?string $zip, array $fresh): array
     $results['release zip: uninstall'] = $shop->console('uninstall');
     $results['release zip: leaves nothing'] = cleanCheck($shop->snapshot());
     removeDir($work);
+    ps_vlog('release zip test done; installing the working copy again');
 
     $shop->deploy($moduleDir);
     $shop->console('install');
@@ -621,8 +727,10 @@ function freshSnapshot(Shop $shop): array
  */
 function releaseTags(string $current): array
 {
-    exec('git -C ' . escapeshellarg(ROOT) . ' tag --list 2>&1', $lines, $code);
+    $code = runCaptured('git -C ' . escapeshellarg(ROOT) . ' tag --list 2>&1', $lines);
     if ($code !== 0) {
+        ps_vlog("git tag failed:\n" . vIndent(implode("\n", $lines)));
+
         return [];
     }
     $tags = [];
@@ -632,6 +740,7 @@ function releaseTags(string $current): array
         }
     }
     uasort($tags, 'version_compare');
+    ps_vlog('git tags: ' . ($lines === [] ? '(none)' : implode(', ', array_map('trim', $lines))) . "; release tags below $current: " . ($tags === [] ? '(none)' : implode(', ', array_keys($tags))));
 
     return $tags;
 }
@@ -643,8 +752,11 @@ function exportRelease(string $tag): ?string
     $work = str_replace('\\', '/', sys_get_temp_dir()) . '/ps-release-' . uniqid();
     mkdir($work, 0775, true);
     $zip = "$work/release.zip";
-    exec('git -C ' . escapeshellarg(ROOT) . ' archive --format=zip -o ' . escapeshellarg($zip) . ' ' . escapeshellarg($tag) . ' ' . escapeshellarg($module) . ' 2>&1', $lines, $code);
+    ps_vlog("exporting $module/ of $tag to $work");
+    $code = runCaptured('git -C ' . escapeshellarg(ROOT) . ' archive --format=zip -o ' . escapeshellarg($zip) . ' ' . escapeshellarg($tag) . ' ' . escapeshellarg($module) . ' 2>&1', $lines);
     if ($code !== 0) {
+        ps_vlog("git archive failed:\n" . vIndent(implode("\n", $lines)));
+
         return null;
     }
     $za = new ZipArchive();
@@ -655,10 +767,14 @@ function exportRelease(string $tag): ?string
     if (is_file("$dir/composer.json")) {
         global $moduleDir;
         rewritePathRepositories($moduleDir, $dir);
-        exec('composer install --no-dev --no-interaction --no-progress --quiet --working-dir=' . escapeshellarg($dir) . ' 2>&1', $out, $code);
+        // --quiet only without verbose output; in verbose mode composer's output is shown.
+        $code = runCaptured('composer install --no-dev --no-interaction --no-progress' . (ps_verbose() ? '' : ' --quiet') . ' --working-dir=' . escapeshellarg($dir) . ' 2>&1', $out);
+        ps_vlog("composer install of $tag:\n" . vIndent(implode("\n", $out)));
         if ($code !== 0) {
             return null;
         }
+    } else {
+        ps_vlog("$tag has no composer.json: no dependencies to install");
     }
 
     return $dir;
@@ -776,17 +892,97 @@ function allOk(array $results): bool
  */
 function requireDocker(): void
 {
-    $cli = (string) @shell_exec('docker --version 2>&1');
+    $cli = shellOutput('docker --version 2>&1');
     if (stripos($cli, 'Docker version') === false) {
         fail("Docker is not installed. These tests start PrestaShop shops in Docker.\nInstall Docker Desktop: https://www.docker.com/products/docker-desktop/");
     }
-    $server = trim((string) @shell_exec('docker info --format "{{.ServerVersion}}" 2>&1'));
+    $server = trim(shellOutput('docker info --format "{{.ServerVersion}}" 2>&1'));
     if (!preg_match('/^\d+\.\d+/', $server)) {
         fail('Docker is installed but not running. Start Docker Desktop and try again.');
     }
-    if (stripos((string) @shell_exec('docker compose version 2>&1'), 'version') === false) {
+    if (stripos(shellOutput('docker compose version 2>&1'), 'version') === false) {
         fail('The Docker compose plugin is missing ("docker compose"). Update Docker Desktop.');
     }
+    ps_vlog('Docker is installed and running, with docker compose');
+}
+
+/**
+ * Output of a short command (shell_exec), reported with its time and output in verbose mode.
+ */
+function shellOutput(string $cmd): string
+{
+    ps_vcmd($cmd);
+    $start = microtime(true);
+    $output = (string) @shell_exec($cmd);
+    ps_vdone('-> ' . trim($output), $start);
+
+    return $output;
+}
+
+/**
+ * Runs a command with its output on the console (passthru) and returns the exit code; in verbose
+ * mode the command, exit code and time are reported.
+ */
+function runShown(string $cmd): int
+{
+    ps_vcmd($cmd);
+    $start = microtime(true);
+    passthru($cmd, $code);
+    ps_vdone(vLabel($cmd), $start, $code);
+
+    return $code;
+}
+
+/**
+ * Runs a command with its output captured (exec) and returns the exit code; in verbose mode the
+ * command, exit code and time are reported.
+ *
+ * @param string[]|null $lines receives the output lines
+ */
+function runCaptured(string $cmd, ?array &$lines): int
+{
+    $lines = [];
+    ps_vcmd($cmd);
+    $start = microtime(true);
+    exec($cmd, $lines, $code);
+    ps_vdone(vLabel($cmd), $start, $code);
+
+    return $code;
+}
+
+/**
+ * Short name of a command for the verbose "exit code" line: the program and its subcommand ("docker compose").
+ */
+function vLabel(string $cmd): string
+{
+    preg_match('/^\s*(?:"([^"]+)"|\'([^\']+)\'|(\S+))(?:\s+([a-z][\w-]*))?/i', $cmd, $m);
+    $program = basename(str_replace('\\', '/', ($m[1] ?? '') . ($m[2] ?? '') . ($m[3] ?? '')));
+
+    return trim($program . ' ' . ($m[4] ?? ''));
+}
+
+/**
+ * Indents captured output for a verbose line ("(no output)" when empty).
+ */
+function vIndent(string $text): string
+{
+    $text = trim($text);
+
+    return $text === '' ? '    (no output)' : '    | ' . str_replace("\n", "\n    | ", $text);
+}
+
+/**
+ * For the verbose summary of "run": whether a suite runs, and if not, why.
+ *
+ * @param string[] $flags
+ */
+function vWhy(bool $configured, string $skipFlag, array $flags): string
+{
+    if (!$configured) {
+        return 'no (not in testing.json)';
+    }
+
+    return in_array($skipFlag, $flags, true) ? "no ($skipFlag)" : 'yes';
 }
 
 /**
@@ -819,6 +1015,7 @@ function httpStatus(string $url): int
 function httpGet(string $url): array
 {
     $context = stream_context_create(['http' => ['timeout' => 30, 'ignore_errors' => true, 'follow_location' => 0]]);
+    $start = microtime(true);
     $body = @file_get_contents($url, false, $context);
     $status = 0;
     foreach ($http_response_header ?? [] as $header) {
@@ -826,6 +1023,7 @@ function httpGet(string $url): array
             $status = (int) $m[1];
         }
     }
+    ps_vlog(sprintf('GET %s -> HTTP %d (%d bytes, %.1fs)', $url, $status, strlen((string) $body), microtime(true) - $start));
 
     return [$status, (string) $body];
 }
@@ -852,9 +1050,22 @@ function curlRequest(string $url, string $jar, ?array $post = null): array
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($post));
     }
+    $start = microtime(true);
     $body = (string) curl_exec($ch);
+    $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    $final = (string) curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
+    // Only the field names of a POST: the login form holds the (demo) password.
+    ps_vlog(sprintf(
+        '%s %s -> HTTP %d%s (%d bytes, %.1fs)',
+        $post !== null ? 'POST' : 'GET',
+        $url,
+        $status,
+        $final !== $url ? ", ended at $final" : '',
+        strlen($body),
+        microtime(true) - $start
+    ) . ($post !== null ? "\n    fields: " . implode(', ', array_keys($post)) : ''));
 
-    return [(int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE), $body, (string) curl_getinfo($ch, CURLINFO_EFFECTIVE_URL)];
+    return [$status, $body, $final];
 }
 
 /**

@@ -16,6 +16,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/verbose.php';
+
 $args = array_values(array_filter(array_slice($argv, 1), static fn (string $a): bool => $a !== '--json'));
 $asJson = in_array('--json', $argv, true);
 $target = $args[0] ?? '';
@@ -29,22 +31,35 @@ $rules = loadRules();
 $fromZip = is_file($target) && str_ends_with(strtolower($target), '.zip');
 $moduleDir = $fromZip ? extractZip($target) : rtrim(str_replace('\\', '/', (string) realpath($target)), '/');
 $name = basename($moduleDir);
+ps_vlog('validate: ' . ($fromZip ? "zip $target, extracted to $moduleDir" : "source $moduleDir") . ", module '$name', rules v" . ($rules['_version'] ?? 'unknown'));
 
 $report = new Report();
 // _dev/ (TypeScript sources and their tooling) is not part of the package: ps-module build leaves it out.
 $skipDirs = $fromZip ? [] : ['vendor', 'tests', 'node_modules', '.cache', 'dist', '_dev'];
+ps_vlog('validate: skipped folders: ' . ($skipDirs !== [] ? implode(', ', $skipDirs) : 'none (a zip is checked as uploaded)'));
 
+$start = microtime(true);
 checkIdentity($moduleDir, $name, $rules, $report);
+ps_vlog('validate: identity (name, main class, version, tab, config.xml): ' . $report->errorCount() . ' error(s) so far');
 checkDistribution($moduleDir, $report, $fromZip);
 checkStructure($moduleDir, $rules, $report, $skipDirs, $fromZip);
+ps_vlog('validate: distribution and structure: ' . $report->errorCount() . ' error(s) so far');
 // Dev files that build-zip.php leaves out of the package.
 $devFiles = ['.php-cs-fixer*', 'phpstan*', 'phpcs.xml*', 'phpunit.xml*', 'composer.json', 'composer.lock', '.license-header.txt'];
+$checked = [];
 foreach (listFiles($moduleDir, array_merge($skipDirs, ['vendor'])) as $file) {
     if (!$fromZip && dirname($file) === '.' && array_filter($devFiles, static fn (string $p): bool => fnmatch($p, $file))) {
+        ps_vlog("validate: $file skipped (dev file, not in the package)");
         continue;
     }
     checkFile($moduleDir, $file, $rules, $report);
+    $extension = strtolower(pathinfo($file, PATHINFO_EXTENSION));
+    $checked[$extension !== '' ? $extension : '(none)'] = ($checked[$extension !== '' ? $extension : '(none)'] ?? 0) + 1;
 }
+arsort($checked);
+ps_vlog('validate: ' . array_sum($checked) . ' file(s) checked (vendor/ not scanned file by file): '
+    . implode(', ', array_map(static fn (string $e, int $n): string => "$n $e", array_keys($checked), $checked)));
+ps_vdone('validate: ' . $report->errorCount() . ' error(s)', $start);
 
 if ($fromZip) {
     removeTree(dirname($moduleDir));
@@ -60,6 +75,8 @@ if ($report->errorCount() === 0 && is_file(__DIR__ . '/dod.php')) {
         $repoDir = dod_repo_dir(dirname((string) realpath($target)));
         if ($repoDir !== null && is_array($meta) && isset($meta['fingerprint'])) {
             dod_stamp($repoDir, 'validate-zip', $meta['fingerprint']);
+        } else {
+            ps_vlog("validate: no stamp: " . ($repoDir === null ? 'no module repository above the zip' : "no fingerprint in $target.json (zip not made by ps-module build)"));
         }
     } elseif (($repoDir = dod_repo_dir($moduleDir)) !== null) {
         dod_stamp($repoDir, 'validate-src');
@@ -135,12 +152,20 @@ function loadRules(): array
     $json = null;
     if (is_file($cache) && filemtime($cache) > time() - 86400) {
         $json = file_get_contents($cache);
+        ps_vlog("validate: rules from the cache $cache (" . date('Y-m-d H:i', (int) filemtime($cache)) . ', refreshed daily)');
     } else {
+        ps_vlog('validate: GET https://validator.prestashop.com/rules');
+        $start = microtime(true);
         $live = @file_get_contents('https://validator.prestashop.com/rules', false, stream_context_create(['http' => ['timeout' => 10]]));
+        ps_vdone('GET rules' . (function_exists('http_get_last_response_headers') ? ' (' . (http_get_last_response_headers()[0] ?? 'no response') . ')' : ''), $start, $live === false ? 'failed' : null);
         if ($live !== false && is_array(json_decode($live, true))) {
             file_put_contents($cache, $live);
             $json = $live;
+            ps_vlog("validate: live rules cached in $cache");
         }
+    }
+    if ($json === null) {
+        ps_vlog("validate: live rules unavailable, using the bundled copy $bundled");
     }
     $data = json_decode((string) ($json ?? file_get_contents($bundled)), true);
     $rules = $data['rules'];

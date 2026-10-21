@@ -19,6 +19,11 @@
 
 declare(strict_types=1);
 
+// Verbose output (ps-module -v). Guarded: the Stop hook may load this file next to another copy of the package.
+if (!function_exists('ps_verbose')) {
+    require_once __DIR__ . '/verbose.php';
+}
+
 const DOD_EXCLUDE_DIRS = ['vendor', '.cache', 'node_modules', 'dist', '.git', '.idea'];
 
 /** Normalises a path: absolute, forward slashes, no trailing slash, no "..". */
@@ -107,13 +112,16 @@ function dod_fingerprint(string $repoDir): string
 {
     $repoDir = dod_norm($repoDir);
     $hash = hash_init('sha256');
-    foreach (dod_source_files($repoDir) as $file) {
+    $files = dod_source_files($repoDir);
+    foreach ($files as $file) {
         hash_update($hash, substr($file, strlen($repoDir)) . "\0");
         // Normalise line endings so a git checkout with CRLF gives the same fingerprint.
         hash_update($hash, str_replace("\r\n", "\n", (string) file_get_contents($file)) . "\0");
     }
+    $fingerprint = hash_final($hash);
+    ps_vlog('dod: fingerprint ' . substr($fingerprint, 0, 12) . ' of ' . count($files) . ' source file(s) in ' . $repoDir);
 
-    return hash_final($hash);
+    return $fingerprint;
 }
 
 /**
@@ -197,6 +205,7 @@ function dod_required_steps(string $repoDir): array
     if (dod_validator_key($repoDir) !== '') {
         $steps[] = 'validator-api';
     }
+    ps_vlog('dod: required steps ' . implode(', ', $steps) . ' (assets: _dev/package.json or views/js, shop-tests: testing.json, docs: docs/docs.json, validator-api: API key)');
 
     return $steps;
 }
@@ -207,10 +216,15 @@ function dod_required_steps(string $repoDir): array
 function dod_validator_key(string $dir): string
 {
     if (getenv('PRESTASHOP_VALIDATOR_API_KEY')) {
+        // Registered so verbose output never shows the key.
+        ps_vsecret((string) getenv('PRESTASHOP_VALIDATOR_API_KEY'));
+
         return (string) getenv('PRESTASHOP_VALIDATOR_API_KEY');
     }
     for ($d = $dir; $d !== dirname($d); $d = dirname($d)) {
         if (is_file("$d/.env") && preg_match('/^\s*PRESTASHOP_VALIDATOR_API_KEY\s*=\s*["\']?([^"\'\s]+)/m', (string) file_get_contents("$d/.env"), $m)) {
+            ps_vsecret($m[1]);
+
             return $m[1];
         }
     }
@@ -226,13 +240,15 @@ function dod_stamp(string $repoDir, string $step, ?string $fingerprint = null, s
     if (!is_dir($dir)) {
         @mkdir($dir, 0775, true);
     }
+    $fingerprint ??= dod_fingerprint($repoDir);
     file_put_contents("$dir/$step.json", json_encode([
         'step' => $step,
         'status' => 'ok',
-        'fingerprint' => $fingerprint ?? dod_fingerprint($repoDir),
+        'fingerprint' => $fingerprint,
         'time' => date('c'),
         'note' => $note,
     ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
+    ps_vlog("dod: stamp '$step' ok (fingerprint " . substr($fingerprint, 0, 12) . ") written to $dir/$step.json" . ($note !== '' ? " ($note)" : ''));
 }
 
 /**
@@ -252,6 +268,7 @@ function dod_skip(string $repoDir, string $step, string $reason): void
         'time' => date('c'),
         'note' => $reason,
     ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n");
+    ps_vlog("dod: stamp '$step' skipped written to $dir/$step.json ($reason)");
 }
 
 /**
@@ -280,6 +297,7 @@ function dod_status(string $repoDir): array
         if (in_array($state, ['missing', 'stale'], true)) {
             $complete = false;
         }
+        ps_vlog("dod: step $step: $state" . (is_array($data) ? ' (stamp ' . substr((string) ($data['fingerprint'] ?? ''), 0, 12) . ' from ' . ($data['time'] ?? '?') . ')' : " (no $file)"));
         $steps[$step] = ['state' => $state, 'note' => (string) ($data['note'] ?? ''), 'time' => (string) ($data['time'] ?? '')];
     }
 

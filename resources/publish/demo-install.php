@@ -32,9 +32,22 @@ if (PHP_SAPI !== 'cli') {
 }
 
 [$zipFile, $module, $php] = array_slice($argv, 1, 3) + ['', '', 'php'];
-if (!is_file($zipFile) || preg_match('/^[a-z][a-z0-9]{3,}$/', $module) !== 1 || !is_file('config/config.inc.php') || !is_dir('modules')) {
-    fwrite(STDERR, "Usage (in the root of the shop): php demo-install.php <zip> <module> [php]\n");
+$problem = !is_file($zipFile) ? "zip not found: $zipFile (in " . getcwd() . ')'
+    : (preg_match('/^[a-z][a-z0-9]{3,}$/', $module) !== 1 ? "not a module name: $module"
+    : (!is_file('config/config.inc.php') || !is_dir('modules') ? 'not the root of a shop: ' . getcwd() : ''));
+if ($problem !== '') {
+    fwrite(STDERR, "Usage (in the root of the shop): php demo-install.php <zip> <module> [php]\n$problem\n");
     exit(2);
+}
+
+/**
+ * One verbose line (VERBOSE=1, set by demo-site.sh -v / ps-module -v), on the output demo-site.sh shows.
+ */
+function demo_vlog(string $message): void
+{
+    if (getenv('VERBOSE') === '1') {
+        echo '  [v] demo-install: ' . $message . "\n";
+    }
 }
 
 /**
@@ -57,7 +70,10 @@ function demo_remove(string $dir): void
  */
 function demo_console(string $php, string $arguments): int
 {
+    demo_vlog("\$ $php bin/console $arguments");
+    $start = microtime(true);
     passthru(escapeshellarg($php) . ' bin/console ' . $arguments . ' 2>&1', $code);
+    demo_vlog(sprintf('bin/console: exit %d after %.1fs', $code, microtime(true) - $start));
 
     return (int) $code;
 }
@@ -72,6 +88,7 @@ if ($zip->open($zipFile) !== true || !$zip->extractTo($staging)) {
     fwrite(STDERR, "Cannot extract $zipFile.\n");
     exit(1);
 }
+demo_vlog(sprintf('zip %s: %d file(s), %.1f MB, extracted to %s', $zipFile, $zip->numFiles, filesize($zipFile) / 1048576, $staging));
 $zip->close();
 if (!is_file("$staging/$module/$module.php")) {
     demo_remove($staging);
@@ -82,6 +99,7 @@ if (!is_file("$staging/$module/$module.php")) {
 // Installed already? Ask PrestaShop in a separate process, so this script does not keep the old classes loaded.
 $check = 'require "config/config.inc.php"; echo Module::isInstalled(' . var_export($module, true) . ') ? "yes" : "no";';
 $installed = trim((string) shell_exec(escapeshellarg($php) . ' -r ' . escapeshellarg($check) . ' 2>/dev/null')) === 'yes';
+demo_vlog("$module is " . ($installed ? 'installed: upgrade' : 'not installed: install'));
 
 if (is_dir($target) && !rename($target, $backup)) {
     demo_remove($staging);
@@ -90,6 +108,7 @@ if (is_dir($target) && !rename($target, $backup)) {
 }
 rename("$staging/$module", $target);
 demo_remove($staging);
+demo_vlog("new files in $target" . (is_dir($backup) ? " (previous version kept in $backup until the install succeeds)" : ''));
 
 $code = demo_console($php, 'prestashop:module ' . ($installed ? 'upgrade' : 'install') . ' ' . escapeshellarg($module));
 if ($code !== 0) {

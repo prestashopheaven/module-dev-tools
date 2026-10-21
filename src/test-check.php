@@ -32,6 +32,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/verbose.php';
+
 /**
  * Runs the static test checks; returns violations as "path:line TST-xx message".
  *
@@ -42,9 +44,12 @@ function checkTests(string $moduleDir): array
     $name = basename($moduleDir);
     // Only PrestaShop modules (main file <module>/<module>.php), not the shared libraries.
     if (!is_file("$moduleDir/$name.php")) {
+        ps_vlog('tests: skipped (no main file <module>.php: not a module)');
+
         return [];
     }
     $found = [];
+    $subjects = 0;
     foreach (['tests/Unit', 'tests/Integration'] as $dir) {
         if (!is_dir("$moduleDir/$dir")) {
             $found[] = "$dir/:1 TST-04 missing: every module has unit tests and integration tests (unit + integration in module.spec.json > tests)";
@@ -57,6 +62,7 @@ function checkTests(string $moduleDir): array
         if ($subject === null) {
             continue; // interface or no declaration: nothing to execute
         }
+        ++$subjects;
         $testFiles = testFilesFor($relative);
         $text = '';
         foreach ($testFiles as $testFile) {
@@ -87,6 +93,8 @@ function checkTests(string $moduleDir): array
             $found[] = "$relative:{$subject['line']} TST-07 {$m[2]}{$m[1]} is never dispatched in an integration test (tests/Integration: through the bus, against a real shop)";
         }
     }
+
+    ps_vlog("tests: $subjects class(es)/trait(s)/enum(s) in src/, controllers/ and classes/ matched against tests/Unit and tests/Integration (TST-04..07)");
 
     return array_merge($found, checkVendorScripts($moduleDir));
 }

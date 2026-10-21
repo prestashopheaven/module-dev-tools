@@ -24,6 +24,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/verbose.php';
+
 const COVERAGE_REQUIRED = ['src/Domain/', 'src/Application/', 'src/Presenter/'];
 
 if (PHP_SAPI === 'cli' && realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === realpath(__FILE__)) {
@@ -64,9 +66,15 @@ function coverageMain(string $moduleDir): int
     $cmd = escapeshellarg(PHP_BINARY) . ' -d memory_limit=2G' . $ini . ' ' . escapeshellarg("$moduleDir/vendor/bin/phpunit")
         . ' --testsuite unit --colors=never --coverage-filter ' . escapeshellarg("$moduleDir/src")
         . ' --coverage-clover ' . escapeshellarg($clover);
+    ps_vlog("coverage: driver $driver, Clover report $clover, required folders " . implode(', ', COVERAGE_REQUIRED));
     $cwd = getcwd();
     chdir($moduleDir);
+    ps_vcmd($cmd . ' 2>&1', $moduleDir);
+    $start = microtime(true);
     exec($cmd . ' 2>&1', $output, $code);
+    ps_vdone('phpunit (unit suite with coverage)', $start, $code);
+    // The output is only printed on failure; verbose shows it always.
+    ps_vlog(implode("\n", $output));
     chdir((string) $cwd);
     if ($code !== 0 || !is_file($clover)) {
         echo implode("\n", array_slice($output, -40)) . "\n";
@@ -91,10 +99,15 @@ function coverageMain(string $moduleDir): int
  */
 function coverageDriver(): string
 {
-    exec(escapeshellarg(PHP_BINARY) . ' -m', $modules);
+    ps_vcmd(escapeshellarg(PHP_BINARY) . ' -m');
+    $start = microtime(true);
+    exec(escapeshellarg(PHP_BINARY) . ' -m', $modules, $code);
+    ps_vdone('php -m', $start, $code);
     $modules = array_map('strtolower', array_map('trim', $modules));
+    $driver = in_array('pcov', $modules, true) ? 'pcov' : (in_array('xdebug', $modules, true) ? 'xdebug' : '');
+    ps_vlog('coverage: driver ' . ($driver !== '' ? $driver : 'none') . ' (pcov preferred, then xdebug)');
 
-    return in_array('pcov', $modules, true) ? 'pcov' : (in_array('xdebug', $modules, true) ? 'xdebug' : '');
+    return $driver;
 }
 
 /**
@@ -109,7 +122,9 @@ function coverageMissing(string $moduleDir, string $xml): array
         return ['.cache/coverage/clover.xml: unreadable report'];
     }
     $missing = [];
-    foreach ($doc->xpath('//file') ?: [] as $file) {
+    $files = $doc->xpath('//file') ?: [];
+    ps_vlog('coverage: ' . count($files) . ' file(s) in the Clover report');
+    foreach ($files as $file) {
         $path = str_replace('\\', '/', (string) $file['name']);
         $relative = str_starts_with($path, $moduleDir . '/') ? substr($path, strlen($moduleDir) + 1) : $path;
         $required = false;

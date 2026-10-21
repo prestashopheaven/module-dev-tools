@@ -31,6 +31,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/dod.php';
+require_once __DIR__ . '/verbose.php';
 
 if (realpath((string) ($_SERVER['SCRIPT_FILENAME'] ?? '')) === __FILE__) {
     exit(gitflow_cli(array_slice($argv, 1)));
@@ -56,6 +57,8 @@ function gitflow_cli(array $args): int
             $state = gitflow_state($repoDir, in_array('--remote', $args, true));
             $dod = is_file("$repoDir/module.spec.json") ? dod_status($repoDir)['complete'] : true;
             $advice = gitflow_advice($state, $dod);
+            ps_vlog('git: definition of done ' . ($dod ? 'complete' : 'not complete') . ', questions due: '
+                . ($advice !== [] ? implode(', ', array_column($advice, 'key')) : 'none'));
             if (in_array('--json', $args, true)) {
                 echo json_encode(['state' => $state, 'advice' => $advice], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n";
 
@@ -105,9 +108,29 @@ function gitflow_cli(array $args): int
 function gitflow_git(string $repoDir, array $args): array
 {
     $command = 'git -C ' . escapeshellarg($repoDir) . ' ' . implode(' ', array_map('escapeshellarg', $args)) . ' 2>&1';
-    exec($command, $output, $code);
 
-    return [(int) $code, trim(implode("\n", $output))];
+    return gitflow_exec($command, null);
+}
+
+/**
+ * Runs a command (stderr included) and returns the exit code and trimmed output. Verbose output shows the command,
+ * the folder, the exit code, the time and the first lines of the output.
+ *
+ * @return array{0: int, 1: string}
+ */
+function gitflow_exec(string $command, ?string $cwd): array
+{
+    ps_vcmd($command, $cwd ?? (string) getcwd());
+    $start = microtime(true);
+    exec($command, $output, $code);
+    $out = trim(implode("\n", $output));
+    ps_vdone((string) strtok($command, ' '), $start, (int) $code);
+    if ($out !== '' && ps_verbose()) {
+        $lines = preg_split('/\R/', $out) ?: [];
+        ps_vlog('  ' . implode("\n  ", array_slice($lines, 0, 20)) . (count($lines) > 20 ? "\n  ... (" . (count($lines) - 20) . ' more line(s))' : ''));
+    }
+
+    return [(int) $code, $out];
 }
 
 /**
@@ -178,7 +201,10 @@ function gitflow_state(string $repoDir, bool $remote = false): array
         [$code, $json] = gitflow_run('gh pr view ' . escapeshellarg($branch) . ' --json number,state,url,isDraft,mergeStateStatus', $repoDir);
         $pr = $code === 0 ? json_decode($json, true) : null;
         $state['pr'] = is_array($pr) ? $pr : null;
+    } elseif ($remote) {
+        ps_vlog('git: no pull request lookup: ' . ($state['host'] !== 'github' ? "host is {$state['host']}, not github" : ($state['on_default'] ? 'on the default branch' : 'gh not installed')));
     }
+    ps_vlog('git: state: ' . gitflow_describe($state) . ($state['head'] !== '' ? ', HEAD ' . substr((string) $state['head'], 0, 12) : ', no commits'));
 
     return $state;
 }
@@ -191,15 +217,20 @@ function gitflow_default_branch(string $repoDir, bool $hasRemote): string
     if ($hasRemote) {
         [$code, $ref] = gitflow_git($repoDir, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
         if ($code === 0 && str_starts_with($ref, 'origin/')) {
+            ps_vlog('git: default branch ' . substr($ref, 7) . ' (origin/HEAD)');
+
             return substr($ref, 7);
         }
     }
     foreach (['main', 'master'] as $candidate) {
         [$code] = gitflow_git($repoDir, ['show-ref', '--verify', '--quiet', "refs/heads/$candidate"]);
         if ($code === 0) {
+            ps_vlog("git: default branch $candidate (local branch; origin/HEAD unknown)");
+
             return $candidate;
         }
     }
+    ps_vlog('git: default branch main (assumed: no origin/HEAD, main or master)');
 
     return 'main';
 }
@@ -213,12 +244,12 @@ function gitflow_run(string $command, string $cwd): array
 {
     $previous = getcwd();
     chdir($cwd);
-    exec($command . ' 2>&1', $output, $code);
+    $result = gitflow_exec($command . ' 2>&1', $cwd);
     if ($previous !== false) {
         chdir($previous);
     }
 
-    return [(int) $code, trim(implode("\n", $output))];
+    return $result;
 }
 
 /**
@@ -226,9 +257,15 @@ function gitflow_run(string $command, string $cwd): array
  */
 function gitflow_has_gh(): bool
 {
-    exec((PHP_OS_FAMILY === 'Windows' ? 'where gh' : 'command -v gh') . ' 2>&1', $out, $code);
+    // Asked several times per run: look it up once.
+    static $found = null;
+    if ($found === null) {
+        [$code] = gitflow_exec((PHP_OS_FAMILY === 'Windows' ? 'where gh' : 'command -v gh') . ' 2>&1', null);
+        $found = $code === 0;
+        ps_vlog('git: GitHub CLI (gh) ' . ($found ? 'found' : 'not found'));
+    }
 
-    return $code === 0;
+    return $found;
 }
 
 /**
@@ -375,8 +412,10 @@ function gitflow_already_asked(string $repoDir, string $signature): bool
 {
     $file = gitflow_asked_file($repoDir);
     $data = is_file($file) ? json_decode((string) file_get_contents($file), true) : null;
+    $asked = is_array($data) && ($data['signature'] ?? '') === $signature;
+    ps_vlog('git: state ' . substr($signature, 0, 12) . ($asked ? ' already asked (' . ($data['reason'] ?? '?') . ', ' . ($data['time'] ?? '?') . ')' : ' not asked yet') . " ($file)");
 
-    return is_array($data) && ($data['signature'] ?? '') === $signature;
+    return $asked;
 }
 
 /**
@@ -384,7 +423,9 @@ function gitflow_already_asked(string $repoDir, string $signature): bool
  */
 function gitflow_mark_asked(string $repoDir, string $signature, string $reason): void
 {
-    @file_put_contents(gitflow_asked_file($repoDir), json_encode(['signature' => $signature, 'reason' => $reason, 'time' => date('c')]) . "\n");
+    $file = gitflow_asked_file($repoDir);
+    @file_put_contents($file, json_encode(['signature' => $signature, 'reason' => $reason, 'time' => date('c')]) . "\n");
+    ps_vlog('git: state ' . substr($signature, 0, 12) . " marked as asked ($reason) in $file");
 }
 
 // ---------------------------------------------------------------------------
@@ -411,6 +452,7 @@ function gitflow_start(string $repoDir, string $slug, string $type): int
     if ($state['host'] !== 'none') {
         gitflow_git($repoDir, ['fetch', '--quiet', 'origin', $state['default']]);
         $state = gitflow_state($repoDir);
+        ps_vlog("git: {$state['default']} is {$state['behind']} commit(s) behind origin" . ($state['behind'] > 0 ? ': pull --ff-only first' : ': no pull needed'));
         if ($state['behind'] > 0) {
             if ($state['dirty'] > 0) {
                 fwrite(STDERR, "ps-module git: {$state['default']} is {$state['behind']} commit(s) behind origin and there are uncommitted changes.\n"
@@ -462,6 +504,7 @@ function gitflow_pr(string $repoDir): int
     [, $log] = gitflow_git($repoDir, ['log', '--oneline', '--no-decorate', "{$state['default']}..HEAD"]);
     $subjects = array_map(static fn (string $l): string => (string) preg_replace('/^[0-9a-f]+\s+/', '', $l), array_filter(preg_split('/\R/', $log) ?: []));
     $title = $subjects !== [] ? (string) end($subjects) : (string) $state['branch']; // the first commit of the branch
+    ps_vlog('git: ' . count($subjects) . " commit(s) on {$state['branch']}, title \"$title\", host {$state['host']}");
     $log = implode("\n", array_map(static fn (string $l): string => "- $l", $subjects));
     if ($state['host'] === 'gitlab') {
         [$code, $out] = gitflow_git($repoDir, ['push', '-u', 'origin', $state['branch'],
@@ -524,6 +567,8 @@ function gitflow_finish(string $repoDir): int
         [$ancestor] = gitflow_git($repoDir, ['merge-base', '--is-ancestor', $branch, $state['default']]);
         [$sameContent] = gitflow_git($repoDir, ['diff', '--quiet', $state['default'], $branch]);
         $prMerged = is_array($state['pr']) && ($state['pr']['state'] ?? '') === 'MERGED';
+        ps_vlog("git: $branch merged into {$state['default']}? ancestor: " . ($ancestor === 0 ? 'yes' : 'no') . ', same content: '
+            . ($sameContent === 0 ? 'yes' : 'no') . ', PR merged: ' . ($prMerged ? 'yes' : 'no'));
         if ($ancestor === 0 || $sameContent === 0 || $prMerged) {
             [, $out] = gitflow_git($repoDir, ['branch', '-D', $branch]);
             echo $out . "\n";

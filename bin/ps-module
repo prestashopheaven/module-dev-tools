@@ -40,26 +40,41 @@
  *   ps-module publish <command>      status [--check] | site | docs | demo | done addons | undo <step>:
  *                                    release checklist per version (REL-08): Addons upload (by hand), docs site with the
  *                                    PDF manuals of every language (SFTP), install/upgrade in the demo shop (SSH)
- *   ps-module demo-site <command>    setup | status | snapshot | restore | test | nightly: the demo shop (one shop for
- *                                    all modules), reset to its snapshot and tested every night (resources/publish/demo-site.sh)
+ *   ps-module demo-site <command>    check | install-prestashop | setup | config | status | snapshot | restore | test |
+ *                                    nightly | demo-mode on|off | settings | push | vps-snapshot: the demo shop (one shop
+ *                                    for all modules), reset to its snapshot and tested every night (resources/publish/demo-site.sh)
  *   ps-module git <command>          status [--remote] | start <name> [--fix] | pr | finish | later:
  *                                    feature branches, commit, push, pull/merge request, merge, clean up (GIT-01..07)
  *   ps-module context [--no-notes|--generate|--status]
  *                                    <repo>/CONTEXT.md: regenerate the overview and record that the Notes match the code
  *   ps-module index                  add the module's index.php to every directory that lacks one (not vendor/, never via symlinks)
  *   ps-module link | unlink          use the local libraries/* of the workspace (symlinked) instead of Packagist, and back
+ *
+ * Every command takes -v / --verbose (anywhere on the line; or PS_MODULE_VERBOSE=1): it then reports each step, every
+ * program it runs (folder, exit code, time) and every remote action on STDERR, with secrets shown as ***.
+ * All commands and their options: COMMANDS.md in this package.
  */
 
 declare(strict_types=1);
 
 $src = dirname(__DIR__) . '/src';
 require_once $src . '/dod.php';
+require_once $src . '/verbose.php';
 
 $args = array_slice($argv, 1);
+// -v / --verbose works for every command: the scripts started below inherit PS_MODULE_VERBOSE.
+if (array_intersect($args, ['-v', '--verbose']) !== []) {
+    $args = array_values(array_diff($args, ['-v', '--verbose']));
+    putenv('PS_MODULE_VERBOSE=1');
+}
 $command = array_shift($args) ?? 'help';
+$started = microtime(true);
+ps_vlog('ps-module ' . trim($command . ' ' . implode(' ', $args)) . '   (PHP ' . PHP_VERSION . ', ' . PHP_BINARY . ', in ' . getcwd() . ')');
+register_shutdown_function(static fn () => ps_vdone("ps-module $command", $started));
 
 $moduleDir = findModuleDir((string) getcwd());
 $repoDir = $moduleDir !== null ? dod_repo_dir($moduleDir) : null;
+ps_vlog('module: ' . ($moduleDir ?? '(none)') . ', repository: ' . ($repoDir ?? '(none)'));
 
 switch ($command) {
     case 'check':
@@ -403,7 +418,10 @@ function run(string $command, ?string $cwd): int
     if ($cwd !== null && $cwd !== '') {
         chdir($cwd);
     }
+    ps_vcmd($command, (string) getcwd());
+    $start = microtime(true);
     passthru($command, $code);
+    ps_vdone('command', $start, (int) $code);
     if ($previous !== false) {
         chdir($previous);
     }

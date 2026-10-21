@@ -26,6 +26,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/verbose.php';
+
 /**
  * The build manifest (docs/build-manifest.json): what was generated from which input.
  *
@@ -199,6 +201,7 @@ function docs_render_manuals(array $ctx, array $languages, array &$manifest): ar
         $date = ($previous['hash'] ?? '') === $hash && isset($previous['date']) ? (string) $previous['date'] : date('Y-m-d');
         $manifest['manual'][$iso] = ['hash' => $hash, 'date' => $date, 'version' => $ctx['version']];
         file_put_contents("$dir/manual.html", str_replace('%%DOCS_DATE%%', $date, $html));
+        ps_vlog("manual $iso: wrote $dir/manual.html (" . round(strlen($html) / 1024) . ' KB, date ' . $date . (($previous['hash'] ?? '') === $hash ? ', content unchanged' : ', content changed') . ')');
         $files[$iso] = "$dir/manual.html";
     }
 
@@ -347,16 +350,21 @@ function docs_render_pdfs(array $ctx, array $htmlFiles, array &$manifest): array
         $hash = docs_pdf_input_hash($html);
         $previous = $manifest['pdf'][$iso] ?? [];
         if (is_file($pdf) && ($previous['hash'] ?? '') === $hash && !empty($previous['ok'])) {
+            ps_vlog("PDF $iso: up to date, skipped (same input as the last build, made by " . ($previous['engine'] ?? '?') . ')');
             $results[$iso] = ['ok' => true, 'engine' => (string) $previous['engine'], 'error' => '', 'file' => $pdf, 'up_to_date' => true, 'warnings' => (array) ($previous['warnings'] ?? [])];
             continue;
         }
+        ps_vlog("PDF $iso: to make (" . (!is_file($pdf) ? 'no PDF yet' : (empty($previous['ok']) ? 'the last attempt failed' : 'the HTML or its images changed')) . ')');
         $todo[$iso] = ['html' => $html, 'pdf' => $pdf, 'hash' => $hash];
     }
     $reasons = [];
+    ps_vlog('PDF engines in order: ' . implode(' > ', docs_pdf_engines($ctx)) . (isset($ctx['config']['pdf']['engines']) ? ' (docs.json > pdf.engines)' : ' (default)'));
     foreach (docs_pdf_engines($ctx) as $engine) {
         if ($todo === []) {
             break;
         }
+        ps_vlog("PDF engine $engine: trying for " . implode(', ', array_keys($todo)));
+        $start = microtime(true);
         $done = match ($engine) {
             'docker' => docs_pdf_docker($ctx, $todo),
             'chrome' => docs_pdf_chrome($todo),
@@ -366,9 +374,12 @@ function docs_render_pdfs(array $ctx, array $htmlFiles, array &$manifest): array
         };
         if (isset($done['error'])) {
             $reasons[] = "$engine: " . $done['error'];
+            ps_vlog("PDF engine $engine: not usable, next engine (" . $done['error'] . ')');
             continue;
         }
+        ps_vdone("PDF engine $engine", $start);
         foreach ($done as $iso => $state) {
+            ps_vlog("PDF $iso via $engine: " . ($state['ok'] ? 'ok, ' . $todo[$iso]['pdf'] : 'failed (' . $state['error'] . '), next engine'));
             if ($state['ok']) {
                 $results[$iso] = ['ok' => true, 'engine' => $engine, 'error' => '', 'file' => $todo[$iso]['pdf'], 'up_to_date' => false, 'warnings' => $state['warnings'] ?? []];
                 $manifest['pdf'][$iso] = ['hash' => $todo[$iso]['hash'], 'engine' => $engine, 'ok' => true, 'warnings' => $state['warnings'] ?? []];
@@ -524,6 +535,7 @@ function docs_pdf_fonts(array $ctx, array $pdfs): array
     $byFile = [];
     foreach ($pdfs as $pdf) {
         $byFile[$pdf] = implode(', ', array_keys($fonts[docs_container_path($ctx, $pdf)] ?? []));
+        ps_vlog("fonts in $pdf: " . ($byFile[$pdf] !== '' ? $byFile[$pdf] : '(none found)'));
     }
 
     return $byFile;
@@ -556,6 +568,7 @@ function docs_pdf_chrome(array $todo): array
     foreach ($todo as $iso => $item) {
         $profile = sys_get_temp_dir() . '/ps-docs-chrome-' . uniqid();
         @unlink($item['pdf']);
+        ps_vlog("PDF $iso (chrome): {$item['html']} -> {$item['pdf']}");
         [$code, $output] = docs_exec([
             $chrome, '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--disable-extensions',
             '--user-data-dir=' . $profile, '--no-pdf-header-footer', '--virtual-time-budget=15000',
@@ -604,10 +617,14 @@ function docs_dompdf_available(array $ctx): bool
             if (is_file($autoload)) {
                 require_once $autoload;
                 if (class_exists('Dompdf\Dompdf')) {
+                    ps_vlog("dompdf: loaded through $autoload");
                     break;
                 }
             }
         }
+    }
+    if (!class_exists('Dompdf\Dompdf')) {
+        ps_vlog('dompdf: not installed (not in the module vendor/ nor in this package)');
     }
 
     return class_exists('Dompdf\Dompdf');
@@ -632,6 +649,7 @@ function docs_pdf_dompdf(array $ctx, array $todo): array
             $states[$iso] = ['ok' => false, 'error' => 'dompdf cannot render this script (no shaping/right-to-left/CJK support)'];
             continue;
         }
+        $start = microtime(true);
         try {
             $class = 'Dompdf\Dompdf';
             $dompdf = new $class(['isRemoteEnabled' => false, 'chroot' => $ctx['docs'], 'defaultFont' => 'DejaVu Sans']);
@@ -643,6 +661,7 @@ function docs_pdf_dompdf(array $ctx, array $todo): array
             $dompdf->setPaper('A4');
             $dompdf->render();
             file_put_contents($item['pdf'], $dompdf->output());
+            ps_vdone("dompdf $iso: {$item['pdf']}", $start);
             $ok = docs_is_pdf($item['pdf']);
             $states[$iso] = ['ok' => $ok, 'error' => $ok ? '' : 'no output'];
         } catch (Throwable $e) {
@@ -658,9 +677,18 @@ function docs_pdf_dompdf(array $ctx, array $todo): array
  */
 function docs_find_chrome(): ?string
 {
+    static $found = false;
+    if ($found !== false) {
+        return $found;
+    }
     $env = getenv('PS_DOCS_CHROME');
     if (is_string($env) && $env !== '' && is_file($env)) {
-        return $env;
+        ps_vlog("Chrome/Edge: $env (PS_DOCS_CHROME)");
+
+        return $found = $env;
+    }
+    if (is_string($env) && $env !== '') {
+        ps_vlog("PS_DOCS_CHROME is set to $env, but that file does not exist: searching");
     }
     $candidates = [];
     if (PHP_OS_FAMILY === 'Windows') {
@@ -677,17 +705,22 @@ function docs_find_chrome(): ?string
     }
     foreach ($candidates as $candidate) {
         if (is_file($candidate)) {
-            return $candidate;
+            ps_vlog("Chrome/Edge: $candidate");
+
+            return $found = $candidate;
         }
     }
     foreach (['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser', 'microsoft-edge', 'microsoft-edge-stable'] as $name) {
-        $found = docs_find_executable($name);
-        if ($found !== null) {
-            return $found;
+        $path = docs_find_executable($name);
+        if ($path !== null) {
+            ps_vlog("Chrome/Edge: $path (on the PATH)");
+
+            return $found = $path;
         }
     }
+    ps_vlog('Chrome/Edge: not found (looked in: ' . ($candidates === [] ? 'the PATH' : implode(', ', $candidates) . ' and the PATH') . ')');
 
-    return null;
+    return $found = null;
 }
 
 /**
@@ -700,10 +733,13 @@ function docs_find_executable(string $name): ?string
         foreach ($exts as $ext) {
             $file = rtrim($dir, '/\\') . DIRECTORY_SEPARATOR . $name . $ext;
             if ($dir !== '' && is_file($file)) {
+                ps_vlog("$name: $file");
+
                 return $file;
             }
         }
     }
+    ps_vlog("$name: not on the PATH");
 
     return null;
 }
@@ -743,6 +779,7 @@ function docs_pdf_preview(array $ctx, string $iso, string $pages): array
     }
     [$first, $last] = array_map('intval', explode('-', $pages . '-' . $pages)) + [1, 3];
     $outDir = $ctx['repo'] . '/.cache/docs/preview';
+    ps_vlog("preview: $pdf, pages $first-$last, into $outDir");
     @mkdir($outDir, 0775, true);
     foreach (glob("$outDir/$iso-*.png") ?: [] as $old) {
         @unlink($old);
@@ -835,6 +872,7 @@ function docs_render_logo(array $ctx): array
         $keep[] = $png;
         $changed = !is_file($svg) || sha1_file($svg) !== sha1_file($source);
         copy($source, $svg);
+        ps_vlog("logo suggestion $name: " . ($changed || !is_file($png) ? 'PNG to render' : 'unchanged, PNG kept') . " ($svg)");
         if ($changed || !is_file($png)) {
             $items[] = ['in' => docs_container_path($ctx, $svg), 'out' => docs_container_path($ctx, $png), 'size' => 512];
         }
@@ -847,6 +885,8 @@ function docs_render_logo(array $ctx): array
     }
     if ($items !== [] && docs_docker_available() === '' && docs_ensure_image()['error'] === '') {
         docs_run_container($ctx, [['type' => 'svg-png', 'items' => $items]], null);
+    } elseif ($items !== []) {
+        ps_vlog('logo suggestions: PNGs not rendered (needs Docker and the docs image); the sheets show the SVG');
     }
 
     return array_map(static fn (array $l): array => ['svg' => $l['svg'], 'png' => is_file($l['png']) ? $l['png'] : ''], $logos);
@@ -979,6 +1019,7 @@ document.querySelectorAll("button.copy").forEach(function (b) {
 </html>
 ';
     file_put_contents("$dir/marketing.html", $html);
+    ps_vlog("marketing $iso: wrote $dir/marketing.json, marketing.md, marketing.html");
 
     return "$dir/marketing.html";
 }
@@ -1093,6 +1134,7 @@ function docs_render_index(array $ctx, array $manifest): string
 </html>
 ';
     file_put_contents($ctx['docs'] . '/index.html', $html);
+    ps_vlog('wrote ' . $ctx['docs'] . '/index.html');
 
     return $ctx['docs'] . '/index.html';
 }
@@ -1124,9 +1166,11 @@ function docs_outputs_state(array $ctx): array
         foreach ($missing as $label => $languages) {
             $parts[] = "$label: " . implode(' ', $languages);
         }
+        ps_vlog('generated output: missing ' . implode('; ', $parts));
 
         return ['state' => 'missing', 'message' => 'not generated yet (' . implode('; ', $parts) . ')'];
     }
+    ps_vlog('generated output: all files there; last build ' . ($manifest['built']['time'] ?? '?') . ', version ' . ($manifest['built']['version'] ?? '?') . ', content hash ' . ($manifest['built']['content'] ?? '?') . ' (now ' . docs_content_hash($ctx) . ')');
     if (($manifest['built']['version'] ?? '') !== $ctx['version']) {
         return ['state' => 'stale', 'message' => 'built for version ' . ($manifest['built']['version'] ?? '?') . ', the module is ' . $ctx['version']];
     }

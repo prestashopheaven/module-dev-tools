@@ -20,6 +20,7 @@
  * configuration_scopes (key => 'global', 'g<id_shop_group>' or 's<id_shop>' rows).
  *
  * Usage: php ps-probe.php <module_name> <CONFIG_PREFIX>
+ * With PS_MODULE_VERBOSE=1 (passed in by ps-test.php) it reports what it found on STDERR.
  */
 
 $root = getenv('_PS_ROOT_DIR_') ?: '/var/www/html';
@@ -31,12 +32,14 @@ require_once $root . '/config/config.inc.php';
 $name = $argv[1];
 $prefix = $argv[2];
 $db = Db::getInstance();
+probeLog("shop $root, module $name, configuration prefix {$prefix}_, table prefix " . _DB_PREFIX_);
 
 $instance = Module::getInstanceByName($name);
 $configurable = $instance instanceof Module && method_exists($instance, 'getContent');
 
 $module = $db->getRow('SELECT id_module, version, active FROM `' . _DB_PREFIX_ . 'module` WHERE name = \'' . pSQL($name) . '\'');
 $idModule = $module ? (int) $module['id_module'] : 0;
+probeLog($module ? "module row: id $idModule, version {$module['version']}, active {$module['active']}" : 'no module row (not installed)');
 
 $hooks = $idModule ? array_column($db->executeS(
     'SELECT DISTINCT h.name FROM `' . _DB_PREFIX_ . 'hook_module` hm
@@ -113,6 +116,15 @@ foreach ($db->executeS('SHOW TABLES LIKE \'' . pSQL(str_replace('_', '\_', _DB_P
     $tables[$table] = ['columns' => $columns, 'keys' => $keys];
 }
 
+probeLog(sprintf(
+    '%d hook(s), %d configuration key(s), %d tab(s), %d override(s), table(s): %s',
+    count($hooks),
+    count($config),
+    count($tabs),
+    count($overrides),
+    $tables === [] ? '(none)' : implode(', ', array_keys($tables))
+));
+
 echo json_encode([
     'installed' => (bool) $module,
     'version' => $module['version'] ?? null,
@@ -127,3 +139,14 @@ echo json_encode([
     'configuration_scopes' => $configurationScopes,
     'tables' => $tables,
 ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+
+/**
+ * Prints a verbose line on STDERR when PS_MODULE_VERBOSE is set. Local copy of ps_vlog(): this
+ * script runs in the container, where src/verbose.php is not available.
+ */
+function probeLog(string $message): void
+{
+    if (in_array(strtolower((string) getenv('PS_MODULE_VERBOSE')), ['1', 'true', 'yes', 'on'], true)) {
+        fwrite(STDERR, '[v ' . gmdate('H:i:s') . '] ps-probe: ' . $message . "\n");
+    }
+}

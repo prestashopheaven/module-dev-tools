@@ -26,6 +26,14 @@ Ontwikkeltools voor PrestaShopHeaven-modules. Installeer als `require-dev`; alle
 | `ps-module skip <stap> "<reden>"` | Stap die echt niet kan draaien (wordt gemeld) |
 | `ps-module assets [status\|check\|build]` | JavaScript van de module (`<module>/_dev/`, `views/js/`): `build` = `npm ci` + `npm run build` (typecheck, lint, tests met 100 % dekking, esbuild bij TypeScript), `check` = bronnen, tests en `views/js` horen bij de laatste geslaagde run (zonder Node) + stempel |
 
+Alle commando's met al hun parameters en opties: [`COMMANDS.md`](COMMANDS.md).
+
+**Verbose:** elk commando neemt `-v` / `--verbose` (overal op de regel, of `PS_MODULE_VERBOSE=1`). Dan meldt het op
+STDERR elke stap, elk programma dat het start (map, exitcode, tijd), elke instelling die het leest en elke actie op een
+server (SSH-commando's, uploads, HTTP-verzoeken); op de demoserver meldt `demo-site.sh` dan ook elke stap. Geheimen
+(wachtwoorden, sleutels, tokens, host en gebruiker van de servers, de database) verschijnen als `***`. De gewone
+uitvoer en uitvoer die andere tools lezen (`--json`) blijven gelijk.
+
 Geslaagde stappen leggen een stempel vast in `<repo>/.cache/dod/` met een vingerafdruk van de
 broncode. De Stop-hook van het project `C:/_GIT/_PrestaShopHeaven/MODULES` gebruikt die om de
 definition of done af te dwingen. Een stempel met de hand zetten kan bewust niet.
@@ -179,8 +187,9 @@ De release-workflow van een module draait `publish docs` en `publish demo` zelf 
 
 **Demowinkel** (`ps-module demo-site`, server-script `resources/publish/demo-site.sh`): één PrestaShop met alle
 modules, in demomodus. Elke nacht (cron op de server) gaat hij terug naar de laatste snapshot (bestanden + database)
-en volgt een rooktest. `publish demo` zet eerst de laatste snapshot terug (schone winkel), installeert of upgradet,
-test en maakt dan een nieuwe snapshot; faalt iets, dan komt de vorige terug. Na elke restore of deploy zet
+en volgt een rooktest. `publish demo` installeert of upgradet alleen die module in de winkel zoals hij is (geen
+restore: de andere bestanden en instellingen blijven), test en maakt dan een nieuwe snapshot; faalt iets, dan komen
+alleen de modulemap en de database van daarvoor terug. Na elke restore zet
 `demo-settings.php` de vaste instellingen: e-mail uit, de demo-medewerker (`DEMO_SITE_EMAIL`/`_PASSWORD`, standaard
 demo@demo.com / demodemo) en de introductiepagina `/<DEMO_SITE_INTRO_PATH>/` (standaard `start`) met links naar de
 winkel en de backoffice (inlog ingevuld) en de modules. `demo-site push <map>` maakt een elders gemaakte snapshot

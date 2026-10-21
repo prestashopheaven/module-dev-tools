@@ -20,6 +20,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/architecture-check.php';
 require_once __DIR__ . '/test-check.php';
+require_once __DIR__ . '/verbose.php';
 
 $args = array_slice($argv, 1);
 $withTests = in_array('--with-tests', $args, true);
@@ -50,6 +51,8 @@ foreach ($it as $file) {
     }
 }
 sort($files);
+ps_vlog('conventions: ' . count($files) . " PHP file(s) in $moduleDir (skipped folders: " . implode(', ', $skip) . '; index.php and .php-cs-fixer* left out)');
+$start = microtime(true);
 
 foreach ($files as $path) {
     $relative = substr($path, strlen($moduleDir) + 1);
@@ -70,11 +73,18 @@ foreach ($files as $path) {
     }
 }
 
+ps_vdone('conventions: DOC-01 docblocks + MOD-01 main class (' . count($violations) . ' problem(s))', $start);
 $srcFiles = array_values(array_filter($files, static fn (string $p): bool => !str_starts_with(substr($p, strlen($moduleDir) + 1), 'tests/')));
-foreach (checkArchitecture($moduleDir, $srcFiles) as $violation) {
+$start = microtime(true);
+$found = checkArchitecture($moduleDir, $srcFiles);
+ps_vdone('conventions: ARCH architecture, ' . count($srcFiles) . ' file(s) outside tests/ (' . count($found) . ' problem(s))', $start);
+foreach ($found as $violation) {
     $violations[] = $violation;
 }
-foreach (checkTests($moduleDir) as $violation) {
+$start = microtime(true);
+$found = checkTests($moduleDir);
+ps_vdone('conventions: TST tests (' . count($found) . ' problem(s))', $start);
+foreach ($found as $violation) {
     $violations[] = $violation;
 }
 

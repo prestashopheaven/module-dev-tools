@@ -23,8 +23,11 @@
  *                                       build the site and upload it by SFTP to <DOCS_SITE_SFTP_PATH>/<module>/
  *                                       (stale files there are removed), then check <DOCS_SITE_URL>/<module>/index.php
  *   ps-module publish demo [--dry-run] [--force]
- *                                       put dist/<module>.zip in the demo shop (SSH, demo-site.sh deploy): back to the
- *                                       latest snapshot, install or upgrade, smoke test, new snapshot (files + database)
+ *                                       put dist/<module>.zip in the demo shop (SSH, demo-site.sh deploy): install or
+ *                                       upgrade only that module in the shop as it is (no restore), smoke test, new
+ *                                       snapshot (files + database); on a failure the module and database go back
+ *   ps-module demo-site check            what the server has and lacks (changes nothing)
+ *   ps-module demo-site install-prestashop [<version>]   PrestaShop on the server (local cache + .db_credentials)
  *   ps-module demo-site setup|config|status|snapshot [note]|restore [<snapshot>]|test|nightly|settings|demo-mode on|off [--dry-run]
  *                                       the demo shop itself (one shop for all modules; works without a module repo):
  *                                       setup uploads the tools, writes demo-site.conf, turns on demo mode, makes the
@@ -36,6 +39,9 @@
  *                                       snapshots/latest) and make it the server's latest: restore + test, back on a
  *                                       failure; then a VPS snapshot
  *   --env=<file>                        read the settings from this file first (e.g. demo-site/local.env)
+ *   -v / --verbose (ps-module -v ...)   every setting read (credentials as ***), the SSH login, every upload, remote
+ *                                       command (exit code, time) and HTTP request, and the steps of demo-site.sh on
+ *                                       the server (VERBOSE=1 there)
  *   ps-module publish vps-snapshot [<description>] [--dry-run]
  *                                       TransIP snapshot of the whole demo/docs VPS (TRANSIP_*): disaster backup.
  *                                       `publish docs` and `publish demo` make one after a successful deploy (unless
@@ -59,10 +65,13 @@
  *   for `demo-site setup` (written to demo-site.conf): DEMO_SITE_PS_ROOT (root of the PrestaShop), DEMO_SITE_URL,
  *   DEMO_SITE_LANGUAGES ("en nl": the languages of the demo shop), DEMO_SITE_TEST_PATHS, DEMO_SITE_ADMIN_DIR,
  *   DEMO_SITE_SNAPSHOT_DIR, DEMO_SITE_KEEP (5), DEMO_SITE_PHP (php), DEMO_SITE_CRON ("30 3 * * *"),
- *   DEMO_SITE_CONNECT_TO (curl --connect-to for the smoke test), DEMO_SITE_DEMO_MODE (on), DEMO_SITE_EMAIL
+ *   DEMO_SITE_CONNECT_TO (curl --connect-to for the smoke test; empty: found itself), DEMO_SITE_KEEP_PATHS (folders
+ *   in the shop root that are not part of the demo; .well-known and docs folders are always kept), DEMO_SITE_DEMO_MODE (on), DEMO_SITE_EMAIL
  *   (demo@demo.com) + DEMO_SITE_PASSWORD (demodemo): the public demo login, DEMO_SITE_INTRO_PATH (start): intro page
  *   TRANSIP_LOGIN, TRANSIP_PRIVATE_KEY (file, or the key itself), TRANSIP_VPS_NAME, TRANSIP_SNAPSHOT_KEEP (1),
  *   TRANSIP_GLOBAL_KEY (true; false = the key only works from whitelisted IPs)
+ *   CLOUDFLARE_API_TOKEN (permission Zone > Cache Purge) + CLOUDFLARE_ZONE_ID: after `publish docs` / `publish demo`
+ *   the changed files (PDFs, logo, views/) are purged from the Cloudflare cache; without them the addresses are listed
  * In CI the key can be given as text: DOCS_SITE_SFTP_KEY / DEMO_SITE_SSH_KEY may hold the key itself.
  * The recorded steps are in <repo>/.cache/publish/<version>.json (local, not in git).
  */
@@ -70,6 +79,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/dod.php';
+require_once __DIR__ . '/verbose.php';
 
 const PUBLISH_STEPS = ['addons', 'docs', 'demo'];
 
@@ -84,6 +94,9 @@ if (PHP_SAPI === 'cli' && realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === realpa
  */
 function publish_main(array $argv): int
 {
+    // Everything printed goes through the mask: host names, users, passwords and keys from the settings never show
+    // up in the output (it may be pasted somewhere, or read by an assistant).
+    ob_start('publish_mask', 1);
     $moduleDir = dod_norm((string) array_shift($argv));
     $command = array_shift($argv) ?? 'help';
     $flags = array_values(array_filter($argv, static fn (string $a): bool => str_starts_with($a, '--')));
@@ -110,6 +123,13 @@ function publish_main(array $argv): int
     // environment, --env and the .env files above the current directory.
     $ctx = $repoDir !== null ? publish_context(dod_norm($repoDir), $moduleDir) : publish_context_without_module($moduleDir);
     $dryRun = in_array('--dry-run', $flags, true);
+    // Read every credential once before anything is printed, so the mask knows them all from the first line on
+    // (a folder setting can contain the SSH user, for example).
+    publish_register_secrets($ctx);
+    ps_vlog("publish $command " . implode(' ', array_merge($args, $flags)) . ($ctx['module'] !== '' ? " (module {$ctx['module']} {$ctx['version']}, repository {$ctx['repo']})" : " (no module, settings found upwards from {$ctx['repo']})"));
+    if (publish_env_file() !== []) {
+        ps_vlog('settings file (--env): ' . count(publish_env_file()) . ' setting(s); server settings come only from it');
+    }
 
     try {
         switch ($command) {
@@ -143,9 +163,83 @@ function publish_main(array $argv): int
                 return $command === 'help' ? 0 : 2;
         }
     } catch (RuntimeException $e) {
-        fwrite(STDERR, 'ps-module publish: ' . $e->getMessage() . "\n");
+        fwrite(STDERR, 'ps-module publish: ' . publish_mask($e->getMessage()) . "\n");
 
         return 1;
+    }
+}
+
+/**
+ * Replaces every secret setting read so far (hosts, users, passwords, keys, TransIP login) with ***.
+ */
+function publish_mask(string $text): string
+{
+    $secrets = publish_secrets();
+    if ($secrets === []) {
+        return $text;
+    }
+    // Longest first, so a value that contains another one is masked as a whole. Only whole words: a user "demo" must
+    // not turn "demo-site.sh" into "***-site.sh".
+    usort($secrets, static fn (string $a, string $b): int => strlen($b) <=> strlen($a));
+    $words = array_map(static fn (string $v): string => preg_quote($v, '/'), $secrets);
+
+    return (string) preg_replace('/(?<![A-Za-z0-9-])(?:' . implode('|', $words) . ')(?![A-Za-z0-9-])/', '***', $text);
+}
+
+/**
+ * The secret setting values read so far; with an argument: registers one more (and each long line of a key).
+ *
+ * @return string[]
+ */
+function publish_secrets(?string $value = null): array
+{
+    static $values = [];
+    // localhost and loopback addresses say nothing about a server: masking them would only hide useful output.
+    if ($value !== null && strlen($value) >= 3 && !in_array(strtolower(trim($value)), ['localhost', '127.0.0.1', '::1'], true)) {
+        $values[$value] = $value;
+        foreach (preg_split('/\R/', $value) ?: [] as $line) {
+            if (strlen(trim($line)) >= 8) {
+                $values[trim($line)] = trim($line);
+            }
+        }
+    }
+
+    return array_values($values);
+}
+
+/**
+ * Reads every credential setting (hosts, users, passwords, keys, TransIP login) and the database settings of
+ * .db_credentials when present, so the mask hides them from the first printed line on. Nothing is printed here.
+ *
+ * @param array<string, mixed> $ctx
+ */
+function publish_register_secrets(array $ctx): void
+{
+    foreach (['DEMO_SITE_SSH', 'DOCS_SITE_SFTP'] as $prefix) {
+        foreach (['_HOST', '_USER', '_PASSWORD', '_KEY', '_KEY_PASSPHRASE'] as $suffix) {
+            publish_env_lookup_quiet($ctx, $prefix . $suffix);
+        }
+    }
+    foreach (['TRANSIP_LOGIN', 'TRANSIP_PRIVATE_KEY', 'CLOUDFLARE_API_TOKEN'] as $key) {
+        publish_env_lookup_quiet($ctx, $key);
+    }
+    try {
+        publish_db_credentials($ctx);
+    } catch (RuntimeException $e) {
+        // No (complete) .db_credentials: only install-prestashop needs it, and it reports that itself.
+    }
+}
+
+/**
+ * Reads a setting so it is registered as a secret, without a verbose line about it.
+ *
+ * @param array<string, mixed> $ctx
+ */
+function publish_env_lookup_quiet(array $ctx, string $key): void
+{
+    $value = publish_env_lookup($ctx, $key);
+    if ($value !== '') {
+        publish_secrets($value);
     }
 }
 
@@ -368,6 +462,7 @@ function publish_build_site(array $ctx): string
     foreach ($ctx['languages'] as $iso) {
         $pdf = "readme_$iso.pdf";
         copy($ctx['repo'] . "/docs/manual/$iso/$pdf", "$dir/$pdf");
+        ps_vlog("docs site: docs/manual/$iso/$pdf (" . publish_size((int) filesize("$dir/$pdf")) . ')');
         $entry = (array) ($ctx['catalog'][$iso] ?? []);
         $languages[$iso] = [
             'native' => (string) ($entry['native'] ?? $entry['name'] ?? $iso),
@@ -413,7 +508,7 @@ function publish_cmd_docs(array $ctx, bool $dryRun, bool $force): int
     $remote = rtrim(publish_require_env($ctx, 'DOCS_SITE_SFTP_PATH'), '/') . '/' . $ctx['module'];
     $files = array_map('basename', glob("$dir/*") ?: []);
     if ($dryRun) {
-        echo "Dry run: would upload " . count($files) . " file(s) to $remote/ on " . publish_require_env($ctx, 'DOCS_SITE_SFTP_HOST') . " and remove other files there.\n";
+        echo "Dry run: would upload " . count($files) . " file(s) to $remote/ on the docs server and remove other files there.\n";
 
         return 0;
     }
@@ -427,8 +522,12 @@ function publish_cmd_docs(array $ctx, bool $dryRun, bool $force): int
         }
         echo "  uploaded $file\n";
     }
+    // Marker: when the docs share a folder with the demo shop, its nightly reset leaves this folder alone.
+    if (!$sftp->put("$remote/.docs-site", "docs of {$ctx['module']} (ps-module publish docs)\n")) {
+        throw new RuntimeException('upload of .docs-site failed.');
+    }
     foreach ($sftp->nlist($remote) ?: [] as $file) {
-        if (!in_array($file, ['.', '..'], true) && !in_array($file, $files, true) && $sftp->is_file("$remote/$file")) {
+        if (!in_array($file, ['.', '..', '.docs-site'], true) && !in_array($file, $files, true) && $sftp->is_file("$remote/$file")) {
             $sftp->delete("$remote/$file");
             echo "  removed stale $file\n";
         }
@@ -444,6 +543,10 @@ function publish_cmd_docs(array $ctx, bool $dryRun, bool $force): int
     }
     publish_record($ctx, 'docs', $note);
     echo "Docs site published: $note\n";
+    if (publish_env($ctx, 'DOCS_SITE_URL') !== '') {
+        $folder = rtrim(publish_env($ctx, 'DOCS_SITE_URL'), '/') . '/' . $ctx['module'] . '/';
+        publish_cloudflare_purge($ctx, array_merge([$folder], array_map(static fn (string $f): string => $folder . rawurlencode($f), $files)));
+    }
 
     return 0;
 }
@@ -476,9 +579,9 @@ function publish_live_version(string $url): ?string
 
 /**
  * Puts the release zip in the demo shop: uploads the zip and the demo tools (resources/publish/demo-site.sh,
- * demo-install.php) to DEMO_SITE_TOOLS_DIR, then runs `demo-site.sh deploy` there: back to the latest snapshot (a
- * clean shop), install or upgrade, smoke test, new snapshot (files + database). On a failure the server puts the
- * snapshot of before back. Records step 'demo'.
+ * demo-install.php) to DEMO_SITE_TOOLS_DIR, then runs `demo-site.sh deploy` there: install or upgrade only this module
+ * in the shop as it is (no restore: the other files and settings stay), intro page, smoke test, new snapshot (files +
+ * database). On a failure the server puts the module folder and the database of before back. Records step 'demo'.
  *
  * @param array<string, mixed> $ctx
  */
@@ -493,8 +596,9 @@ function publish_cmd_demo(array $ctx, bool $dryRun, bool $force): int
         throw new RuntimeException('the zip is not the checked zip of the current code: vendor/bin/ps-module build && vendor/bin/ps-module validate-zip');
     }
     $tools = publish_demo_tools_dir($ctx);
+    ps_vlog(sprintf('zip: %s (%s, built %s), checked zip of the current code', $zip, publish_size((int) filesize($zip)), date('Y-m-d H:i', (int) filemtime($zip))));
     if ($dryRun) {
-        echo "Dry run: would upload {$ctx['module']}.zip to " . publish_require_env($ctx, 'DEMO_SITE_SSH_HOST') . ":$tools/uploads/ and run demo-site.sh deploy (restore latest snapshot, install/upgrade, test, new snapshot).\n";
+        echo "Dry run: would upload {$ctx['module']}.zip to the demo server:$tools/uploads/ and run demo-site.sh deploy (install/upgrade only this module, test, new snapshot; nothing else in the shop changes).\n";
 
         return 0;
     }
@@ -507,7 +611,8 @@ function publish_cmd_demo(array $ctx, bool $dryRun, bool $force): int
     [$output, $exit] = publish_demo_run($ssh, $tools, 'deploy ' . escapeshellarg($remoteZip) . ' ' . escapeshellarg($ctx['module']));
     $ssh->delete($remoteZip);
     if ($exit !== 0 || preg_match_all('/^DEMO-OK (\S*)$/m', $output, $m) < 1) {
-        throw new RuntimeException('deploying to the demo shop failed (exit ' . var_export($exit, true) . '); the server put the previous snapshot back.');
+        // demo-site.sh says itself when it put the snapshot of before back (a failed install or test).
+        throw new RuntimeException('the deploy failed on the server (exit ' . var_export($exit, true) . '): see the server output above.');
     }
     $version = (string) end($m[1]);
     if ($version !== $ctx['version']) {
@@ -516,8 +621,37 @@ function publish_cmd_demo(array $ctx, bool $dryRun, bool $force): int
     $url = publish_env($ctx, 'DEMO_SITE_URL');
     publish_record($ctx, 'demo', "version $version" . ($url !== '' ? " on $url" : '') . ', new snapshot');
     echo "Demo shop has {$ctx['module']} $version and a new snapshot" . ($url !== '' ? " ($url)" : '') . ".\n";
+    if ($url !== '') {
+        publish_cloudflare_purge($ctx, publish_module_asset_urls($zip, $ctx['module'], $url));
+    }
 
     return 0;
+}
+
+/**
+ * The public addresses of the static files of a module in a shop (logo.*, views/**: images, CSS, JS, fonts), from its
+ * release zip: what a CDN may still serve from an older version after an upgrade.
+ *
+ * @return list<string>
+ */
+function publish_module_asset_urls(string $zipFile, string $module, string $shopUrl): array
+{
+    $zip = new ZipArchive();
+    if ($zip->open($zipFile) !== true) {
+        return [];
+    }
+    $base = rtrim($shopUrl, '/') . '/modules/';
+    $urls = [];
+    for ($i = 0; $i < $zip->numFiles; ++$i) {
+        $name = (string) $zip->getNameIndex($i);
+        if (preg_match('#^' . preg_quote($module, '#') . '/(logo\.(png|gif|svg|jpg)|views/.+\.(png|gif|svg|jpe?g|webp|ico|css|js|woff2?|ttf|eot|map))$#i', $name) === 1) {
+            $urls[] = $base . implode('/', array_map('rawurlencode', explode('/', $name)));
+        }
+    }
+    $zip->close();
+    ps_vlog(count($urls) . " static file address(es) of $module for the CDN purge");
+
+    return $urls;
 }
 
 /**
@@ -531,13 +665,36 @@ function publish_cmd_demo(array $ctx, bool $dryRun, bool $force): int
 function publish_cmd_demo_site(array $ctx, array $args, bool $dryRun): int
 {
     $command = (string) ($args[0] ?? 'status');
-    if (!in_array($command, ['setup', 'status', 'snapshot', 'restore', 'test', 'nightly', 'demo-mode', 'settings', 'config', 'push', 'vps-snapshot'], true)) {
-        fwrite(STDERR, "ps-module demo-site: setup | status | snapshot [note] | restore [<snapshot>] | test | nightly | demo-mode on|off | settings | config | push <snapshot-dir> | vps-snapshot [<description>]\n");
+    if (!in_array($command, ['check', 'install-prestashop', 'setup', 'status', 'snapshot', 'restore', 'test', 'nightly', 'demo-mode', 'settings', 'config', 'push', 'vps-snapshot'], true)) {
+        fwrite(STDERR, "ps-module demo-site: check | install-prestashop | setup | status | snapshot [note] | restore [<snapshot>] | test | nightly | demo-mode on|off | settings | config | push <snapshot-dir> | vps-snapshot [<description>]\n");
 
         return 2;
     }
+    // The database settings of the server are masked in all output too: publish_main() registered them
+    // (publish_register_secrets()).
     if ($command === 'vps-snapshot') {
         return publish_cmd_vps_snapshot($ctx, (string) ($args[1] ?? 'manual snapshot ' . date('Y-m-d H:i')), $dryRun) ? 0 : 1;
+    }
+    if ($command === 'check') {
+        // Before setup: what the server has and what is missing (commands, PHP extensions, web server, shop folder).
+        $tools = publish_demo_tools_dir($ctx);
+        $ssh = publish_connect($ctx, 'DEMO_SITE_SSH');
+        if (!$ssh->is_dir($tools) && !$ssh->mkdir($tools, 0700, true)) {
+            throw new RuntimeException("cannot create $tools.");
+        }
+        if (!$ssh->put("$tools/demo-server-check.sh", __DIR__ . '/../resources/publish/demo-server-check.sh', \phpseclib3\Net\SFTP::SOURCE_LOCAL_FILE)) {
+            throw new RuntimeException('upload of demo-server-check.sh failed.');
+        }
+        $ssh->setTimeout(120);
+        $output = (string) $ssh->exec((ps_verbose() ? 'VERBOSE=1 ' : '') . 'DEMO_SITE_PHP=' . escapeshellarg(publish_env($ctx, 'DEMO_SITE_PHP') ?: 'php') . ' bash '
+            . escapeshellarg("$tools/demo-server-check.sh") . ' ' . escapeshellarg(publish_env($ctx, 'DEMO_SITE_PS_ROOT'))
+            . ' ' . escapeshellarg(rtrim(publish_env($ctx, 'DEMO_SITE_URL'), '/')) . ' 2>&1');
+        echo rtrim($output) . "\n";
+
+        return 0;
+    }
+    if ($command === 'install-prestashop') {
+        return publish_demo_install_prestashop($ctx, (string) ($args[1] ?? ''), $dryRun);
     }
     if ($command === 'push') {
         return publish_demo_push($ctx, (string) ($args[1] ?? ''), $dryRun);
@@ -674,7 +831,8 @@ function publish_brand_files(): array
 function publish_demo_run(\phpseclib3\Net\SFTP $ssh, string $tools, string $command, bool $print = true): array
 {
     $ssh->setTimeout(3600);
-    $output = (string) $ssh->exec('bash ' . escapeshellarg("$tools/demo-site.sh") . " $command 2>&1");
+    // VERBOSE=1: demo-site.sh then reports every step too (ps-module -v).
+    $output = (string) $ssh->exec((ps_verbose() ? 'VERBOSE=1 ' : '') . 'bash ' . escapeshellarg("$tools/demo-site.sh") . " $command 2>&1");
     $exit = $ssh->getExitStatus();
     if ($print) {
         echo preg_replace('/^/m', '  ', rtrim($output)) . "\n";
@@ -701,6 +859,8 @@ function publish_demo_conf(array $ctx): string
         'PHP' => publish_env($ctx, 'DEMO_SITE_PHP') ?: 'php',
         'CRON_TIME' => publish_env($ctx, 'DEMO_SITE_CRON') ?: '30 3 * * *',
         'CONNECT_TO' => publish_env($ctx, 'DEMO_SITE_CONNECT_TO'),
+        'KEEP_PATHS' => publish_env($ctx, 'DEMO_SITE_KEEP_PATHS'),
+        'CRON_INSTALL' => publish_env($ctx, 'DEMO_SITE_CRON_INSTALL') === 'no' ? 'no' : 'yes',
         'DEMO_EMAIL' => publish_env($ctx, 'DEMO_SITE_EMAIL') ?: 'demo@demo.com',
         'DEMO_PASSWORD' => publish_env($ctx, 'DEMO_SITE_PASSWORD') ?: 'demodemo',
         'INTRO_PATH' => publish_env($ctx, 'DEMO_SITE_INTRO_PATH') ?: 'start',
@@ -736,7 +896,7 @@ function publish_demo_push(array $ctx, string $local, bool $dryRun): int
     $tools = publish_demo_tools_dir($ctx);
     $size = (filesize("$dir/db.sql.gz") + filesize("$dir/files.tar.gz")) / 1048576;
     if ($dryRun) {
-        printf("Dry run: would upload %s (%.1f MB) as snapshot %s to %s and activate it.\n", $dir, $size, $name, publish_require_env($ctx, 'DEMO_SITE_SSH_HOST'));
+        printf("Dry run: would upload %s (%.1f MB) as snapshot %s to the demo server and activate it.\n", $dir, $size, $name);
 
         return 0;
     }
@@ -780,11 +940,72 @@ function publish_after_deploy(array $ctx, string $what): int
     try {
         return publish_cmd_vps_snapshot($ctx, $description, false) ? 0 : 1;
     } catch (RuntimeException $e) {
-        fwrite(STDERR, "ps-module publish: the deploy is done, but the VPS snapshot failed: {$e->getMessage()}\n"
+        fwrite(STDERR, "ps-module publish: the deploy is done, but the VPS snapshot failed: " . publish_mask($e->getMessage()) . "\n"
             . "  Try again later: vendor/bin/ps-module publish vps-snapshot\n");
 
         return 1;
     }
+}
+
+/**
+ * After an upload: the files of a new version keep their address (modules/<module>/logo.png, readme_<iso>.pdf), and a
+ * CDN in front of the server (Cloudflare) keeps serving the old copy for as long as the server's Cache-Control allows
+ * (10 years for static files on many servers). With CLOUDFLARE_API_TOKEN (permission Zone > Cache Purge) and
+ * CLOUDFLARE_ZONE_ID the addresses are purged through the API, 30 per request; without them the addresses are listed
+ * for a purge by hand. A failing purge is reported but does not undo the deploy.
+ *
+ * @param array<string, mixed> $ctx
+ * @param list<string> $urls
+ */
+function publish_cloudflare_purge(array $ctx, array $urls): void
+{
+    $urls = array_values(array_unique(array_filter($urls, static fn (string $u): bool => preg_match('#^https?://#', $u) === 1)));
+    if ($urls === []) {
+        return;
+    }
+    $token = publish_env($ctx, 'CLOUDFLARE_API_TOKEN');
+    $zone = publish_env($ctx, 'CLOUDFLARE_ZONE_ID');
+    if ($token === '' || $zone === '') {
+        echo "Cloudflare cache: not purged (no CLOUDFLARE_API_TOKEN + CLOUDFLARE_ZONE_ID). Visitors may see the old files until\n"
+            . "  these addresses are purged (Cloudflare dashboard > Caching > Configuration > Custom Purge):\n";
+        foreach ($urls as $url) {
+            echo "  $url\n";
+        }
+
+        return;
+    }
+    if (!function_exists('curl_init')) {
+        fwrite(STDERR, "ps-module publish: the PHP curl extension is needed to purge the Cloudflare cache.\n");
+
+        return;
+    }
+    $purged = 0;
+    foreach (array_chunk($urls, 30) as $chunk) {
+        $ch = curl_init('https://api.cloudflare.com/client/v4/zones/' . rawurlencode($zone) . '/purge_cache');
+        curl_setopt_array($ch, [
+            CURLOPT_CUSTOMREQUEST => 'POST',
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 30,
+            CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'Authorization: Bearer ' . $token],
+            CURLOPT_POSTFIELDS => (string) json_encode(['files' => $chunk]),
+        ]);
+        $start = microtime(true);
+        $raw = curl_exec($ch);
+        $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $error = curl_error($ch);
+        unset($ch);
+        $body = is_string($raw) ? json_decode($raw, true) : null;
+        ps_vlog(sprintf('Cloudflare purge of %d address(es): HTTP %d after %.1fs', count($chunk), $status, microtime(true) - $start));
+        if (!is_array($body) || empty($body['success'])) {
+            $message = is_array($body) ? implode('; ', array_map(static fn ($e): string => is_array($e) ? (string) ($e['message'] ?? '') : '', (array) ($body['errors'] ?? []))) : $error;
+            fwrite(STDERR, "ps-module publish: the upload is done, but the Cloudflare purge failed (HTTP $status): $message\n"
+                . "  Purge by hand: Cloudflare dashboard > Caching > Configuration > Custom Purge.\n");
+
+            return;
+        }
+        $purged += count($chunk);
+    }
+    echo "Cloudflare cache purged: $purged address(es).\n";
 }
 
 /**
@@ -801,6 +1022,13 @@ function publish_cmd_vps_snapshot(array $ctx, string $description, bool $dryRun)
     $vps = publish_require_env($ctx, 'TRANSIP_VPS_NAME');
     $keep = max(1, (int) (publish_env($ctx, 'TRANSIP_SNAPSHOT_KEEP') ?: 1));
     if ($dryRun) {
+        // A real test of the API access with a read-only token: the VPS and its snapshots; nothing changes.
+        $token = publish_transip_token($ctx, true);
+        $info = publish_transip($token, 'GET', "/vps/$vps")['body']['vps'] ?? [];
+        echo "TransIP API: logged in (read-only). VPS $vps: " . (string) ($info['status'] ?? '?') . (!empty($info['isLocked']) ? ', busy' : '') . "\n";
+        foreach (publish_transip_snapshots($token, $vps) as $snapshot) {
+            echo "  snapshot {$snapshot['name']} ({$snapshot['dateTimeCreate']})\n";
+        }
         echo "Dry run: would create a TransIP snapshot of $vps (\"$description\") and keep the newest $keep.\n";
 
         return true;
@@ -863,7 +1091,7 @@ function publish_transip_snapshots(string $token, string $vps): array
  *
  * @throws RuntimeException when the key cannot be read or TransIP refuses the login
  */
-function publish_transip_token(array $ctx): string
+function publish_transip_token(array $ctx, bool $readOnly = false): string
 {
     $keySetting = publish_require_env($ctx, 'TRANSIP_PRIVATE_KEY');
     $pem = is_file($keySetting) ? (string) file_get_contents($keySetting) : str_replace('\n', "\n", $keySetting);
@@ -874,7 +1102,7 @@ function publish_transip_token(array $ctx): string
     $body = (string) json_encode([
         'login' => publish_require_env($ctx, 'TRANSIP_LOGIN'),
         'nonce' => bin2hex(random_bytes(16)),
-        'read_only' => false,
+        'read_only' => $readOnly,
         'expiration_time' => '30 minutes',
         'label' => 'ps-module publish ' . bin2hex(random_bytes(3)),
         'global_key' => publish_env($ctx, 'TRANSIP_GLOBAL_KEY') !== 'false',
@@ -921,8 +1149,12 @@ function publish_transip(string $token, string $method, string $path, array|stri
     if ($body !== null) {
         curl_setopt($ch, CURLOPT_POSTFIELDS, is_string($body) ? $body : (string) json_encode($body));
     }
+    $start = microtime(true);
     $raw = curl_exec($ch);
     $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    // The token, the signature and the request body (the login) are never shown.
+    ps_vlog(sprintf('TransIP API %s %s: HTTP %d after %.1fs%s', $method, $path, $status, microtime(true) - $start,
+        is_string($raw) && $status >= 400 ? ' (' . substr($raw, 0, 300) . ')' : (is_string($raw) ? '' : ' (' . curl_error($ch) . ')')));
     unset($ch);
     if (!is_string($raw)) {
         throw new RuntimeException("TransIP API $method $path: no answer.");
@@ -949,9 +1181,14 @@ function publish_transip(string $token, string $method, string $path, array|stri
 function publish_release_guard(array $ctx, bool $force): void
 {
     if ($force || getenv('CI') !== false) {
+        ps_vlog('release check skipped (' . ($force ? '--force' : 'CI') . ')');
+
         return;
     }
-    $tag = trim((string) shell_exec('git -C ' . escapeshellarg($ctx['repo']) . ' tag -l ' . escapeshellarg('v' . $ctx['version'])));
+    $git = 'git -C ' . escapeshellarg($ctx['repo']) . ' tag -l ' . escapeshellarg('v' . $ctx['version']);
+    ps_vcmd($git);
+    $tag = trim((string) shell_exec($git));
+    ps_vlog('release tag v' . $ctx['version'] . ': ' . ($tag !== '' ? 'found' : 'missing'));
     if ($tag === '') {
         throw new RuntimeException("version {$ctx['version']} is not released (no tag v{$ctx['version']}). Publish after the release, or use --force.");
     }
@@ -964,26 +1201,69 @@ function publish_release_guard(array $ctx, bool $force): void
  */
 function publish_env(array $ctx, string $key): string
 {
+    static $reported = [];
+    $value = publish_env_lookup($ctx, $key);
+    // DEMO_SITE_PASSWORD is the public demo login (shown on the intro page), not a secret.
+    $secret = $key !== 'DEMO_SITE_PASSWORD' && preg_match('/_(HOST|USER|PASSWORD|PASS|KEY|PASSPHRASE|TOKEN|SECRET|LOGIN)$/', $key) === 1;
+    if ($value !== '' && $secret) {
+        publish_secrets($value);
+    }
+    if (!isset($reported[$key])) {
+        $reported[$key] = true;
+        ps_vlog("setting $key: " . ($value === '' ? '(not set)' : ($secret ? '*** (set)' : $value) . ' (from ' . publish_env_source() . ')'));
+    }
+
+    return $value;
+}
+
+/**
+ * Looks a setting up: the --env file, the environment, then the nearest .env file upwards from the repository.
+ *
+ * @param array<string, mixed> $ctx
+ */
+function publish_env_lookup(array $ctx, string $key): string
+{
     $file = publish_env_file();
-    if ($file !== [] && (array_key_exists($key, $file) || preg_match('/^(DEMO_SITE|DOCS_SITE|TRANSIP)_/', $key) === 1)) {
-        // With --env the server settings come only from that file: a local test must never reach the real servers
-        // or the TransIP account through a value in .env.
+    if ($file !== [] && (array_key_exists($key, $file) || preg_match('/^(DEMO_SITE|DOCS_SITE|TRANSIP|CLOUDFLARE)_/', $key) === 1)) {
+        // With --env the server settings come only from that file: a local test must never reach the real servers,
+        // the TransIP account or the Cloudflare zone through a value in .env.
+        publish_env_source('the --env file');
+
         return $file[$key] ?? '';
     }
     $value = getenv($key);
     if (is_string($value) && $value !== '') {
+        publish_env_source('the environment');
+
         return $value;
     }
     for ($dir = $ctx['repo']; $dir !== dirname($dir); $dir = dirname($dir)) {
         if (is_file("$dir/.env") && preg_match('/^\s*' . preg_quote($key, '/') . '\s*=\s*(.*?)\s*$/m', (string) file_get_contents("$dir/.env"), $m)) {
             $found = trim($m[1], "\"'");
             if ($found !== '') {
+                publish_env_source("$dir/.env");
+
                 return $found;
             }
         }
     }
+    publish_env_source('nowhere');
 
     return '';
+}
+
+/**
+ * Where the last setting came from (the --env file, the environment or a .env path), for verbose output; with an
+ * argument: records it.
+ */
+function publish_env_source(?string $source = null): string
+{
+    static $last = '';
+    if ($source !== null) {
+        $last = $source;
+    }
+
+    return $last;
 }
 
 /**
@@ -1041,26 +1321,57 @@ function publish_connect(array $ctx, string $prefix): \phpseclib3\Net\SFTP
     if (!class_exists(\phpseclib3\Net\SFTP::class)) {
         throw new RuntimeException('phpseclib is missing: composer update prestashopheaven/module-dev-tools (1.13+).');
     }
+    require_once __DIR__ . '/publish-sftp.php';
     $host = publish_require_env($ctx, $prefix . '_HOST');
     $user = publish_require_env($ctx, $prefix . '_USER');
     $port = (int) (publish_env($ctx, $prefix . '_PORT') ?: 22);
     $key = publish_env($ctx, $prefix . '_KEY');
     $password = publish_env($ctx, $prefix . '_PASSWORD');
+    $credential = null;
     if ($key !== '') {
         $passphrase = publish_env($ctx, $prefix . '_KEY_PASSPHRASE');
         $text = is_file($key) ? (string) file_get_contents($key) : str_replace('\n', "\n", $key);
-        $credential = \phpseclib3\Crypt\PublicKeyLoader::load($text, $passphrase !== '' ? $passphrase : false);
-    } elseif ($password !== '') {
+        try {
+            $credential = \phpseclib3\Crypt\PublicKeyLoader::load($text, $passphrase !== '' ? $passphrase : false);
+        } catch (\Throwable $e) {
+            if ($password === '') {
+                throw new RuntimeException("{$prefix}_KEY is not a readable private key (a file path or the key itself).");
+            }
+            fwrite(STDERR, "ps-module publish: {$prefix}_KEY is not a readable private key; logging in with {$prefix}_PASSWORD.\n");
+        }
+    }
+    if ($credential === null && $password !== '') {
         $credential = $password;
-    } else {
+    }
+    if ($credential === null) {
         throw new RuntimeException("{$prefix}_KEY or {$prefix}_PASSWORD is not set.");
     }
-    $sftp = new \phpseclib3\Net\SFTP($host, $port, 20);
-    if (!$sftp->login($user, $credential)) {
-        throw new RuntimeException("login as $user on $host:$port failed.");
+    // Messages never name the host or the user: they are credentials too, and output may be shared.
+    $method = is_string($credential) ? 'password' : 'private key';
+    ps_vlog("connecting to {$prefix}_HOST on port $port as {$prefix}_USER with a $method");
+    $start = microtime(true);
+    try {
+        $sftp = new PublishSftp($host, $port, 20);
+        $ok = $sftp->login($user, $credential);
+    } catch (\Throwable $e) {
+        ps_vlog('connection error: ' . get_class($e) . ': ' . $e->getMessage());
+        throw new RuntimeException("cannot connect to {$prefix}_HOST on port $port (" . get_class($e) . ').');
     }
+    if (!$ok) {
+        ps_vlog('login refused; server messages: ' . implode(' | ', array_map('strval', (array) $sftp->getErrors())));
+        throw new RuntimeException("login failed: check {$prefix}_USER and {$prefix}_PASSWORD (or {$prefix}_KEY), and that the server allows this login.");
+    }
+    ps_vdone("logged in ({$sftp->getServerIdentification()})", $start);
 
     return $sftp;
+}
+
+/**
+ * A byte count in a readable unit (B, KB, MB).
+ */
+function publish_size(int $bytes): string
+{
+    return $bytes >= 1048576 ? sprintf('%.1f MB', $bytes / 1048576) : ($bytes >= 1024 ? sprintf('%.1f KB', $bytes / 1024) : $bytes . ' B');
 }
 
 /**
@@ -1077,9 +1388,248 @@ function publish_http_get(string $url): ?array
     }
     $ch = curl_init($url);
     curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => true, CURLOPT_TIMEOUT => 15, CURLOPT_USERAGENT => 'ps-module publish']);
+    $start = microtime(true);
     $body = curl_exec($ch);
     $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    ps_vlog(sprintf('GET %s: HTTP %d, %s%s after %.1fs', $url, $status, is_string($body) ? publish_size(strlen($body)) : 'no answer',
+        curl_error($ch) !== '' ? ' (' . curl_error($ch) . ')' : '', microtime(true) - $start));
     unset($ch);
 
     return is_string($body) ? ['status' => $status, 'body' => $body] : null;
+}
+
+
+/**
+ * Installs PrestaShop on the demo server, once, before `demo-site setup`: the files of <version> from the local cache
+ * (../.cache/prestashop/<version>, fetch-prestashop.php), then PrestaShop's own CLI installer with the database from
+ * .db_credentials. The database settings reach the server only in a private file that the runner deletes before the
+ * installer starts, never on a command line, and are masked in all output.
+ *
+ * @param array<string, mixed> $ctx
+ */
+function publish_demo_install_prestashop(array $ctx, string $version, bool $dryRun): int
+{
+    $version = $version !== '' ? $version : (publish_env($ctx, 'DEMO_SITE_PS_VERSION') ?: '9.2.0');
+    if (preg_match('/^\d+\.\d+\.\d+$/', $version) !== 1) {
+        throw new RuntimeException("not a PrestaShop version: $version.");
+    }
+    $source = '';
+    for ($dir = $ctx['repo']; $dir !== dirname($dir); $dir = dirname($dir)) {
+        if (is_file("$dir/.cache/prestashop/$version/install/index_cli.php")) {
+            $source = "$dir/.cache/prestashop/$version";
+            break;
+        }
+    }
+    if ($source === '') {
+        throw new RuntimeException("no PrestaShop $version with its installer in .cache/prestashop/: php .claude/skills/ps-module/scripts/fetch-prestashop.php $version");
+    }
+    $db = publish_db_credentials($ctx);
+    $root = rtrim(publish_require_env($ctx, 'DEMO_SITE_PS_ROOT'), '/');
+    $url = rtrim(publish_require_env($ctx, 'DEMO_SITE_URL'), '/');
+    $port = parse_url($url, PHP_URL_PORT);
+    $domain = (string) parse_url($url, PHP_URL_HOST) . ($port ? ':' . $port : '');
+    $base = rtrim((string) parse_url($url, PHP_URL_PATH), '/') . '/';
+    $admin = publish_env($ctx, 'DEMO_SITE_ADMIN_DIR') ?: 'admin-dev';
+    $php = publish_env($ctx, 'DEMO_SITE_PHP') ?: 'php';
+    $tools = publish_demo_tools_dir($ctx);
+    $args = [
+        '--step=all', '--language=en', '--all_languages=0',
+        '--timezone=' . (publish_env($ctx, 'DEMO_SITE_TIMEZONE') ?: 'Europe/Amsterdam'),
+        '--base_uri=' . $base, '--domain=' . $domain, '--ssl=' . (str_starts_with($url, 'https://') ? '1' : '0'), '--rewrite=1',
+        '--db_server=' . $db['host'] . ($db['port'] !== '' ? ':' . $db['port'] : ''), '--db_name=' . $db['name'],
+        '--db_user=' . $db['user'], '--db_password=' . $db['password'], '--db_create=0', '--db_clear=1', '--prefix=ps_',
+        '--name=' . (publish_env($ctx, 'DEMO_SITE_SHOP_NAME') ?: 'PrestaShopHeaven demo'),
+        '--country=' . (publish_env($ctx, 'DEMO_SITE_COUNTRY') ?: 'nl'), '--firstname=Demo', '--lastname=Demo',
+        '--email=' . (publish_env($ctx, 'DEMO_SITE_EMAIL') ?: 'demo@demo.com'),
+        '--password=' . (publish_env($ctx, 'DEMO_SITE_PASSWORD') ?: 'demodemo'), '--newsletter=0', '--send_email=0',
+        // No demo products: the demo content comes from the local demo (demo-site push), which replaces the database.
+        '--fixtures=' . (publish_env($ctx, 'DEMO_SITE_FIXTURES') === '1' ? '1' : '0'),
+    ];
+    if ($dryRun) {
+        $present = array_keys(array_filter($db, static fn (string $v): bool => $v !== ''));
+        echo "Dry run: would upload PrestaShop $version (from $source) to DEMO_SITE_PS_ROOT on the demo server, rename admin/ to $admin/"
+            . " and install it for $url with the database from .db_credentials (found: " . implode(', ', $present) . ").\n";
+
+        return 0;
+    }
+    $ssh = publish_connect($ctx, 'DEMO_SITE_SSH');
+    $ssh->setTimeout(3600);
+    $q = static fn (string $v): string => escapeshellarg($v);
+    // install/ is removed after a successful install: with it, an earlier attempt stopped half-way.
+    $state = trim((string) $ssh->exec('if [ -f ' . $q("$root/install/index_cli.php") . ' ]; then echo unpacked; elif [ -f '
+        . $q("$root/app/config/parameters.php") . ' ]; then echo installed; elif [ -d ' . $q($root)
+        . ' ]; then find ' . $q($root) . ' -mindepth 1 -maxdepth 1 ! -name robots.txt ! -name index.html ! -name .well-known'
+        . ' ! -name .htaccess ! -name favicon.ico | wc -l; else echo 0; fi'));
+    if ($state === 'installed') {
+        throw new RuntimeException('PrestaShop is already installed in DEMO_SITE_PS_ROOT (app/config/parameters.php exists). Next: ps-module demo-site setup');
+    }
+    if ($state !== '0' && $state !== 'unpacked') {
+        throw new RuntimeException('DEMO_SITE_PS_ROOT is not empty (only robots.txt, index.html, .htaccess, favicon.ico and .well-known may be there): remove the rest first.');
+    }
+    if (!$ssh->is_dir($tools) && !$ssh->mkdir($tools, 0700, true)) {
+        throw new RuntimeException("cannot create $tools.");
+    }
+
+    // Absolute: the installer runs from the install/ folder of the shop.
+    $tools = (string) $ssh->realpath($tools);
+    if ($state === 'unpacked') {
+        echo "The files of an earlier attempt are there: running the installer again.\n";
+    } else {
+        echo "Packing PrestaShop $version ...\n";
+        $archive = sys_get_temp_dir() . "/ps-demo-prestashop-$version.tar.gz";
+        @unlink($archive);
+        $tar = ['tar', '-czf', $archive, '--exclude=./var/cache/*', '--exclude=./var/logs/*', '-C', $source, '.'];
+        ps_vcmd($tar);
+        $process = proc_open($tar, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        if (!is_resource($process)) {
+            throw new RuntimeException('cannot run tar.');
+        }
+        $tarError = (string) stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        if (proc_close($process) !== 0 || !is_file($archive)) {
+            throw new RuntimeException('tar failed: ' . trim($tarError));
+        }
+        printf("Uploading %.1f MB ...\n", filesize($archive) / 1048576);
+        $remoteArchive = "$tools/prestashop-$version.tar.gz";
+        if (!$ssh->put($remoteArchive, $archive, \phpseclib3\Net\SFTP::SOURCE_LOCAL_FILE)) {
+            throw new RuntimeException('upload of the PrestaShop files failed.');
+        }
+        @unlink($archive);
+        echo "Unpacking into DEMO_SITE_PS_ROOT ...\n";
+        $output = (string) $ssh->exec('set -e; mkdir -p ' . $q($root) . '; tar --warning=no-timestamp --no-same-owner -xzf ' . $q($remoteArchive)
+            . ' -C ' . $q($root) . '; rm -f ' . $q($remoteArchive) . '; if [ -d ' . $q("$root/admin") . ' ] && [ ' . $q($admin) . ' != admin ]; then mv '
+            . $q("$root/admin") . ' ' . $q("$root/$admin") . '; fi; echo unpacked 2>&1');
+        if (!str_contains($output, 'unpacked')) {
+            throw new RuntimeException('unpacking failed: ' . trim($output));
+        }
+    }
+
+    // Language packs from the local demo shop: the installer then does not download them. A download leaves the
+    // database connection idle, and servers with a short wait_timeout (Hestia: 10 s) drop it ("server has gone away").
+    $packs = [];
+    for ($dir = $ctx['repo']; $packs === [] && $dir !== dirname($dir); $dir = dirname($dir)) {
+        foreach (["$dir/shop/translations", "$dir/demo-site/shop/translations"] as $translations) {
+            $packs = $packs ?: (glob("$translations/{sf,emails}-*.zip", GLOB_BRACE) ?: []);
+        }
+    }
+    foreach ($packs as $pack) {
+        if (!$ssh->put("$root/translations/" . basename($pack), $pack, \phpseclib3\Net\SFTP::SOURCE_LOCAL_FILE)) {
+            throw new RuntimeException('upload of language pack ' . basename($pack) . ' failed.');
+        }
+    }
+    if ($packs !== []) {
+        echo 'Language packs from the local demo shop: ' . implode(' ', array_map('basename', $packs)) . "\n";
+    }
+
+    // The installer reads its arguments from $argv: a small runner fills that from a private file and deletes it first.
+    $argsFile = "$tools/.install-args-" . bin2hex(random_bytes(6)) . '.json';
+    $runner = "$tools/.install-runner.php";
+    $runnerCode = "<?php\n"
+        . "\$file = \$argv[1];\n"
+        . "\$args = json_decode((string) file_get_contents(\$file), true);\n"
+        . "unlink(\$file);\n"
+        . "\$argv = array_merge(['index_cli.php'], is_array(\$args) ? \$args : []);\n"
+        . "\$argc = count(\$argv);\n"
+        . "\$_SERVER['argv'] = \$argv;\n"
+        . "require 'index_cli.php';\n";
+    if (!$ssh->put($runner, $runnerCode) || !$ssh->put($argsFile, '') || !$ssh->chmod(0600, $argsFile) || !$ssh->put($argsFile, (string) json_encode($args))) {
+        $ssh->delete($argsFile);
+        throw new RuntimeException('cannot write the installer settings on the server.');
+    }
+    echo "Installing PrestaShop $version (several minutes) ...\n";
+    $output = (string) $ssh->exec('cd ' . $q("$root/install") . ' && ' . $q($php) . ' -d memory_limit=-1 -d max_execution_time=0 ' . $q($runner) . ' ' . $q($argsFile) . ' 2>&1');
+    $exit = $ssh->getExitStatus();
+    $ssh->delete($argsFile);
+    $ssh->delete($runner);
+    echo preg_replace('/^/m', '  ', rtrim($output)) . "\n";
+    if ($exit !== 0 || !str_contains($output, 'Installation successful')) {
+        throw new RuntimeException('the PrestaShop installer failed (see above). The files stay in DEMO_SITE_PS_ROOT; empty it before you try again.');
+    }
+    $ssh->exec('rm -rf ' . $q("$root/install") . ' ' . $q("$root/var/cache") . '/*');
+    echo "PrestaShop $version installed (back office: $url/$admin/). Next: ps-module demo-site setup\n";
+
+    return 0;
+}
+
+/**
+ * The database of the demo shop from the .db_credentials file (nearest one upwards from the repository): KEY=value
+ * or key: value lines (host/server, port, name/database, user/username, password, prefix) or PHP define()s. The values
+ * are only used for the PrestaShop installer and are masked in all output; errors name fields, never values.
+ *
+ * @param array<string, mixed> $ctx
+ *
+ * @return array{host: string, port: string, name: string, user: string, password: string}
+ */
+function publish_db_credentials(array $ctx): array
+{
+    // DEMO_SITE_DB_CREDENTIALS: another file (e.g. a local test with --env).
+    $file = publish_env($ctx, 'DEMO_SITE_DB_CREDENTIALS');
+    if ($file !== '' && !is_file($file)) {
+        throw new RuntimeException('DEMO_SITE_DB_CREDENTIALS: file not found.');
+    }
+    for ($dir = $ctx['repo']; $file === '' && $dir !== dirname($dir); $dir = dirname($dir)) {
+        if (is_file("$dir/.db_credentials")) {
+            $file = "$dir/.db_credentials";
+            break;
+        }
+    }
+    if ($file === '') {
+        throw new RuntimeException('no .db_credentials file found (in the workspace root, next to .env).');
+    }
+    $fields = [
+        'host' => ['host', 'server', 'hostname', 'dbhost', 'dbserver', 'dbhostname', 'databasehost', 'databaseserver', 'mysqlhost', 'mysqlserver'],
+        'port' => ['port', 'dbport', 'databaseport', 'mysqlport'],
+        'name' => ['name', 'dbname', 'database', 'databasename', 'db', 'schema', 'dbdatabase', 'mysqldatabase', 'mysqldb'],
+        'user' => ['user', 'username', 'login', 'dbuser', 'dbusername', 'dblogin', 'databaseuser', 'databaseusername', 'databaselogin', 'mysqluser'],
+        'password' => ['password', 'pass', 'pwd', 'passwd', 'dbpassword', 'dbpass', 'dbpwd', 'dbpasswd', 'databasepassword', 'databasepass', 'mysqlpassword', 'mysqlpwd'],
+        'prefix' => ['prefix', 'dbprefix', 'tableprefix', 'databaseprefix'],
+    ];
+    $found = ['host' => '', 'port' => '', 'name' => '', 'user' => '', 'password' => '', 'prefix' => ''];
+    $unknown = 0;
+    foreach (preg_split('/\R/', (string) file_get_contents($file)) ?: [] as $line) {
+        $line = trim($line);
+        if ($line === '' || $line[0] === '#' || str_starts_with($line, '//') || str_starts_with($line, '<?php')) {
+            continue;
+        }
+        if (preg_match('/^define\(\s*[\'"]([^\'"]+)[\'"]\s*,\s*[\'"](.*)[\'"]\s*\)\s*;?$/', $line, $m) !== 1
+            && preg_match('/^(?:export\s+)?([A-Za-z][A-Za-z0-9_. -]*?)\s*[:=]\s*(.*)$/', $line, $m) !== 1) {
+            ++$unknown;
+            continue;
+        }
+        $key = strtolower((string) preg_replace('/[^A-Za-z0-9]/', '', $m[1]));
+        $value = trim($m[2]);
+        if (strlen($value) >= 2 && ($value[0] === '"' || $value[0] === "'") && substr($value, -1) === $value[0]) {
+            $value = substr($value, 1, -1);
+        }
+        $field = null;
+        foreach ($fields as $name => $keys) {
+            if (in_array($key, $keys, true)) {
+                $field = $name;
+            }
+        }
+        if ($field === null) {
+            ++$unknown;
+            continue;
+        }
+        $found[$field] = $value;
+        if ($field !== 'port' && $field !== 'prefix') {
+            publish_secrets($value);
+        }
+    }
+    $missing = array_keys(array_filter(['name' => $found['name'], 'user' => $found['user'], 'password' => $found['password']], static fn (string $v): bool => $v === ''));
+    if ($missing !== []) {
+        throw new RuntimeException('.db_credentials has no ' . implode(', ', $missing) . " ($unknown line(s) not recognised; use lines like DB_NAME=..., DB_USER=..., DB_PASSWORD=..., optional DB_HOST=... and DB_PORT=...).");
+    }
+    if ($found['prefix'] !== '' && $found['prefix'] !== 'ps_') {
+        throw new RuntimeException('.db_credentials asks for another table prefix: the demo snapshots use ps_.');
+    }
+    if ($found['host'] !== '' && $found['port'] === '' && preg_match('/^(.+):(\d+)$/', $found['host'], $m) === 1) {
+        [$found['host'], $found['port']] = [$m[1], $m[2]];
+    }
+    // Field names only, never values.
+    ps_vlog('database settings: ' . $file . ': ' . implode(', ', array_keys(array_filter($found, static fn (string $v): bool => $v !== '')))
+        . ($unknown > 0 ? " ($unknown line(s) not recognised)" : ''));
+
+    return ['host' => $found['host'] ?: 'localhost', 'port' => $found['port'], 'name' => $found['name'], 'user' => $found['user'], 'password' => $found['password']];
 }

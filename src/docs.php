@@ -29,7 +29,7 @@
  *   ps-module docs marketing [<iso>...]  render docs/marketing/<iso>/marketing.html, .md and .json
  *   ps-module docs logo <file>          the chosen logo (MKT-07) becomes the module's: docs/content/logo.svg|png and
  *                                        <module>/logo.png (512 x 512, transparent); ask the user first, before docs build
- *   ps-module docs cover [--force] [--name=..] [--logo=..] [--bar=fit|full] [--stripes=under|none|over] [--out=..]
+ *   ps-module docs cover [--force] [--name=..] [--logo=..] [--logo-area=x0,y0,x1,y1] [--bar=fit|full] [--stripes=under|none|over] [--out=..]
  *                                        the box cover (MKT-08): docs/marketing/cover.png (+ cover-1000.png) from the box
  *                                        template of the workspace (branding/box/box.json) with the logo and the name
  *   ps-module docs build [--no-screenshots] [--screenshots] [--keep]
@@ -54,6 +54,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/dod.php';
+require_once __DIR__ . '/verbose.php';
 require_once __DIR__ . '/docs-markdown.php';
 require_once __DIR__ . '/docs-render.php';
 require_once __DIR__ . '/docs-shots.php';
@@ -87,6 +88,11 @@ function docs_main(array $argv): int
         return 2;
     }
     $ctx = docs_context(dod_norm($repoDir), $moduleDir);
+    ps_vlog("docs $command" . ($args !== [] ? ' ' . implode(' ', $args) : '') . ($flags !== [] ? ' ' . implode(' ', $flags) : ''));
+    ps_vlog("module {$ctx['module']} {$ctx['version']} in {$ctx['module_dir']}, repository {$ctx['repo']}");
+    ps_vlog('languages: ' . implode(' ', $ctx['languages']) . " (source {$ctx['source']}, from i18n.json)");
+    ps_vlog('PrestaShop: min ' . ($ctx['ps_min'] !== '' ? $ctx['ps_min'] : '?') . ', test versions ' . (is_array($ctx['testing']) ? implode(', ', array_map('strval', (array) ($ctx['testing']['versions'] ?? []))) . ' (testing.json)' : 'none (no testing.json)'));
+    ps_vlog('docs/docs.json: ' . ($ctx['config'] !== null ? 'found, ' . count((array) ($ctx['config']['screenshots'] ?? [])) . ' screenshot(s)' : ($ctx['config_error'] ? 'invalid JSON' : 'missing')));
     if ($command !== 'init' && $command !== 'doctor' && $command !== 'help' && $ctx['config'] === null) {
         fwrite(STDERR, "ps-module docs: docs/docs.json is missing. Create it with: vendor/bin/ps-module docs init\n");
 
@@ -202,6 +208,7 @@ function docs_write_json(string $file, array $data): void
         mkdir(dirname($file), 0775, true);
     }
     file_put_contents($file, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n");
+    ps_vlog("wrote $file");
 }
 
 /**
@@ -439,13 +446,16 @@ function docs_validate(array $ctx): array
     docs_validate_frame($ctx, $add);
     docs_validate_marketing_common($ctx, (array) ($config['marketing'] ?? []), $add);
 
+    ps_vlog('validated docs.json, frame and common marketing: ' . count($issues) . ' problem(s)');
     $sourceManual = docs_load_manual($ctx, $ctx['source']);
     $sourceMarketing = docs_load_marketing($ctx, $ctx['source']);
     $sourceCaptions = docs_load_captions($ctx, $ctx['source']);
     foreach ($ctx['languages'] as $iso) {
+        $before = count($issues);
         docs_validate_manual($ctx, $iso, $sourceManual, $add);
         docs_validate_marketing($ctx, $iso, $sourceMarketing, $add);
         docs_validate_captions($ctx, $iso, $sourceCaptions, $add);
+        ps_vlog("validated $iso (manual.md, marketing.json" . (docs_frames_enabled($ctx) ? ', screenshots.json' : '') . '): ' . (count($issues) - $before) . ' problem(s)');
     }
 
     return $issues;
@@ -1033,8 +1043,10 @@ function docs_cmd_init(array $ctx): int
     foreach ($files as $target => $template) {
         $path = $ctx['docs'] . '/' . $target;
         if (is_file($path)) {
+            ps_vlog("init: $path exists, kept");
             continue;
         }
+        ps_vlog("init: $path from the skeleton $skeleton/$template");
         $json = str_ends_with($target, '.json');
         $content = (string) preg_replace_callback('/\{\{([A-Z_]+)\}\}/', static function (array $m) use ($vars, $json): string {
             if (!isset($vars[$m[1]])) {
@@ -1343,8 +1355,10 @@ function docs_cmd_build(array $ctx, array $flags): int
     // Screenshots: retake when the module code or the screenshot settings changed.
     $shots = docs_shots_state($ctx);
     $configured = (array) ($ctx['config']['screenshots'] ?? []) !== [];
+    ps_vlog('build: screenshots ' . ($configured ? $shots['state'] . ' (' . $shots['message'] . ')' : 'none configured'));
     if ($configured) {
         $force = in_array('--screenshots', $flags, true);
+        ps_vlog('build: screenshots ' . (in_array('--no-screenshots', $flags, true) && !$force ? 'not retaken (--no-screenshots)' : ($force ? 'retaken (--screenshots)' : ($shots['state'] !== 'ok' ? 'retaken (' . $shots['state'] . ')' : 'kept (up to date)'))));
         if (in_array('--no-screenshots', $flags, true) && !$force) {
             if ($shots['state'] === 'missing') {
                 echo "\nps-module docs build: screenshots are missing and --no-screenshots was given. Run without it (Docker needed).\n";
@@ -1448,10 +1462,12 @@ function docs_cmd_build(array $ctx, array $flags): int
         echo "\nWarnings (tell the user):\n  - " . implode("\n  - ", array_unique($warnings)) . "\n";
     }
     if (dod_fingerprint($ctx['repo']) !== $fingerprint) {
+        ps_vlog('build: fingerprint ' . $fingerprint . ' at the start, ' . dod_fingerprint($ctx['repo']) . ' now');
         echo "\nps-module docs build: the module code changed during the build. Run it again.\n";
 
         return 1;
     }
+    ps_vlog("build: recording the 'docs' stamp for fingerprint $fingerprint, content hash " . $manifest['built']['content'] . ' (' . $ctx['repo'] . '/.cache/dod/docs.json)');
     dod_stamp($ctx['repo'], 'docs', $fingerprint, implode('; ', $notes) . ($warnings !== [] ? '; ' . count(array_unique($warnings)) . ' warning(s)' : ''));
     // The content is not part of the module fingerprint: record its hash too, so a later text change can be detected.
     $stamp = docs_read_json($ctx['repo'] . '/.cache/dod/docs.json');
@@ -1498,6 +1514,7 @@ function docs_cmd_mark_translated(array $ctx, array $args): int
                 $code = 1;
             } else {
                 $manual['meta']['translated_from'] = implode(' ', docs_manual_hashes($source));
+                ps_vlog("$iso manual.md: translated_from = " . $manual['meta']['translated_from']);
                 file_put_contents(docs_content_file($ctx, $iso, 'manual'), docs_build_front_matter($manual['meta'], $manual['body']));
                 echo "  $iso manual.md: recorded as translated from the current {$ctx['source']} text\n";
             }
@@ -1560,6 +1577,7 @@ function docs_cmd_preview(array $ctx, array $args, array $flags): int
             $pages = substr($flag, 8);
         }
     }
+    ps_vlog("preview: language $iso, pages $pages");
     $result = docs_pdf_preview($ctx, $iso, $pages);
     echo $result['message'] . "\n";
 

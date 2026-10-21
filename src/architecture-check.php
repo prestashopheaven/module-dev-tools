@@ -27,6 +27,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/verbose.php';
+
 const ARCH_PRESENTATION_DIRS = ['Module', 'Controller', 'Form', 'Grid', 'Presenter', 'Console', 'Webservice', 'ApiPlatform'];
 const ARCH_INFRASTRUCTURE_DIRS = ['Infrastructure', 'Entity', 'Model', 'Install'];
 const ARCH_DOMAIN_SUBDIRS = ['Model', 'ValueObject', 'Exception', 'Repository', 'Service', 'Event', 'Specification'];
@@ -45,17 +47,22 @@ function checkArchitecture(string $moduleDir, array $files): array
     $ns = archNamespace($moduleDir);
     // Only PrestaShop modules (main file <module>/<module>.php); not the shared libraries.
     if (!is_dir("$moduleDir/src") || !is_file("$moduleDir/" . basename($moduleDir) . '.php')) {
+        ps_vlog('architecture: skipped (no src/ or no main file <module>.php: not a module)');
+
         return [];
     }
+    ps_vlog("architecture: namespace of src/ '" . $ns . "' (composer.json autoload psr-4)");
     if ($ns === '') {
         return ['composer.json ARCH-01 no PSR-4 autoload entry for "src/": the architecture check needs the module namespace'];
     }
     $name = basename($moduleDir);
     $violations = [];
     $messages = [];
+    $layers = [];
     foreach ($files as $path) {
         $relative = substr($path, strlen($moduleDir) + 1);
         $layer = archLayer($relative, $name);
+        $layers[$layer ?? 'not checked'] = ($layers[$layer ?? 'not checked'] ?? 0) + 1;
         if ($layer === null) {
             continue;
         }
@@ -77,6 +84,10 @@ function checkArchitecture(string $moduleDir, array $files): array
             }
         }
     }
+
+    ksort($layers);
+    ps_vlog('architecture: files per layer: ' . implode(', ', array_map(static fn (string $l, int $n): string => "$l $n", array_keys($layers), $layers)));
+    ps_vlog('architecture: ' . count($messages) . ' command/query class file(s) in src/Application/*/Command|Query/');
 
     return array_merge($violations, archCheckCqrsSet($moduleDir, $ns, $messages));
 }
@@ -648,6 +659,8 @@ function archCheckCqrsSet(string $moduleDir, string $ns, array $messages): array
     $registered = array_map(static fn (string $c): string => ltrim(str_replace('\\\\', '\\', $c), '\\'), $m[1]);
     preg_match_all('/^\s{2}[\'"]?([A-Za-z0-9_\\\\]+Handler)[\'"]?\s*:/m', $yaml, $h);
     $handlers = array_map(static fn (string $c): string => ltrim(str_replace('\\\\', '\\', $c), '\\'), $h[1]);
+    ps_vlog('architecture: config/*.yml: ' . count(archYamlFiles("$moduleDir/config")) . ' file(s), ' . count($handlers) . ' handler service(s), '
+        . count($registered) . ' handler tag(s), bus ' . (str_contains($yaml, 'ModuleCommandBus') ? 'registered' : 'not registered'));
 
     $folders = [];
     foreach ($messages as $message) {

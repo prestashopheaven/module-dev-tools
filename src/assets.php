@@ -38,6 +38,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/dod.php';
+require_once __DIR__ . '/verbose.php';
 
 // Vitest 5, jsdom 29 and ESLint 10 need Node 22.13+ (or 24+).
 const ASSETS_MIN_NODE = '22.13.0';
@@ -49,6 +50,7 @@ if ($moduleDir === '' || !is_dir($moduleDir)) {
     exit(2);
 }
 $devDir = "$moduleDir/_dev";
+ps_vlog("assets: $command in $moduleDir, _dev/package.json " . (is_file("$devDir/package.json") ? 'present' : 'missing'));
 if (!is_file("$devDir/package.json")) {
     $scripts = assets_scripts($moduleDir);
     if ($scripts === []) {
@@ -118,11 +120,18 @@ function assets_problems(string $moduleDir): array
         return ['_dev/build-manifest.json is not valid: rebuild it.'];
     }
     $typescript = ($manifest['mode'] ?? 'typescript') === 'typescript';
+    ps_vlog('assets: manifest ' . $manifestFile . ', mode ' . ($typescript ? 'typescript' : 'plain JavaScript') . ', ' . count($manifest['outputs']) . ' output(s): '
+        . implode(', ', array_keys($manifest['outputs'])) . ', tests passed: ' . (($manifest['tests']['passed'] ?? false) === true ? 'yes' : 'no'));
     $problems = [];
     if (($manifest['tests']['passed'] ?? false) !== true) {
         $problems[] = 'The last run has no passing tests with 100% coverage (manifest of an older build.mjs?): update _dev/ from the skill template and rebuild (TST-20..29).';
     }
-    if ($manifest['sources'] !== assets_hash(assets_source_files($moduleDir), "$moduleDir/_dev")) {
+    $sources = assets_source_files($moduleDir);
+    $sourceHash = assets_hash($sources, "$moduleDir/_dev");
+    ps_vlog('assets: ' . count($sources) . ' source file(s) (_dev/ and .license-header.txt), hash ' . substr($sourceHash, 0, 12)
+        . ', manifest ' . substr((string) $manifest['sources'], 0, 12));
+    ps_vlog('assets: ' . count(assets_scripts($moduleDir)) . ' script(s) in views/js/ (views/js/vendor/ left out)');
+    if ($manifest['sources'] !== $sourceHash) {
         $problems[] = 'The sources or tests in _dev/ (or .license-header.txt) changed after the last passing run.';
     }
     if ($typescript && $manifest['outputs'] === []) {
@@ -260,8 +269,12 @@ function assets_stamp(string $moduleDir): void
  */
 function assets_build(string $devDir): int
 {
-    $node = trim((string) shell_exec('node -v 2>' . (PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null')));
-    $npm = trim((string) shell_exec('npm -v 2>' . (PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null')));
+    $null = PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null';
+    ps_vcmd("node -v 2>$null");
+    $node = trim((string) shell_exec("node -v 2>$null"));
+    ps_vcmd("npm -v 2>$null");
+    $npm = trim((string) shell_exec("npm -v 2>$null"));
+    ps_vlog('assets: node ' . ($node !== '' ? $node : 'not found') . ', npm ' . ($npm !== '' ? $npm : 'not found') . ' (needs Node ' . ASSETS_MIN_NODE . '+)');
     if ($node === '' || $npm === '') {
         fwrite(STDERR, "ps-module assets: Node.js and npm are needed to build the TypeScript (Node " . ASSETS_MIN_NODE . "+), but "
             . ($node === '' ? 'node' : 'npm') . " was not found on the PATH.\n"
@@ -285,6 +298,7 @@ function assets_build(string $devDir): int
         echo "ps-module assets: npm ci\n";
         $code = assets_run('npm ci --no-audit --no-fund', $devDir);
     } else {
+        ps_vlog('assets: node_modules is newer than package-lock.json: no npm ci');
         $code = 0;
     }
     if ($code !== 0) {
@@ -307,7 +321,10 @@ function assets_run(string $command, string $cwd): int
 {
     $previous = getcwd();
     chdir($cwd);
+    ps_vcmd($command, $cwd);
+    $start = microtime(true);
     passthru($command, $code);
+    ps_vdone($command, $start, $code);
     if ($previous !== false) {
         chdir($previous);
     }

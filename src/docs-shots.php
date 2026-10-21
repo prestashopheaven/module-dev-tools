@@ -29,6 +29,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/verbose.php';
+
 /**
  * Runs a command (an argument list, no shell) with a timeout; returns the exit code and the output.
  * With $stream the output goes straight to the console (and the returned output is empty).
@@ -43,9 +45,12 @@ function docs_exec(array $command, int $timeout, ?string $cwd = null, bool $stre
     $descriptors = $stream
         ? [0 => ['file', PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null', 'r'], 1 => STDOUT, 2 => STDERR]
         : [0 => ['file', PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null', 'r'], 1 => ['file', $out, 'w'], 2 => ['file', $out, 'a']];
+    ps_vcmd($command, $cwd);
+    $start = microtime(true);
     $process = @proc_open($command, $descriptors, $pipes, $cwd);
     if (!is_resource($process)) {
         @unlink($out);
+        ps_vdone('could not start ' . $command[0], $start, 127);
 
         return [127, 'could not start ' . $command[0]];
     }
@@ -70,8 +75,67 @@ function docs_exec(array $command, int $timeout, ?string $cwd = null, bool $stre
     if ($code === 124) {
         $output .= "\n(timed out after {$timeout}s)";
     }
+    ps_vdone(basename((string) $command[0]) . ($code === 124 ? " (timed out after {$timeout}s)" : ''), $start, $code);
+    docs_voutput($output);
 
     return [$code, $output];
+}
+
+/**
+ * Verbose: shows the captured output of a program (the last 60 lines, at most 6000 characters).
+ */
+function docs_voutput(string $output): void
+{
+    $output = trim($output);
+    if (!ps_verbose() || $output === '') {
+        return;
+    }
+    $lines = preg_split('/\R/', $output) ?: [];
+    $cut = count($lines) > 60 ? '(' . (count($lines) - 60) . " earlier lines left out)\n" : '';
+    $text = implode("\n", array_slice($lines, -60));
+    if (strlen($text) > 6000) {
+        $text = '...' . substr($text, -6000);
+    }
+    ps_vlog("output:\n" . $cut . $text);
+}
+
+/**
+ * Verbose: describes the tasks of a docs container job, item by item (screenshot URL, viewport, selector, files).
+ *
+ * @param array<int, array<string, mixed>> $tasks
+ */
+function docs_vtasks(array $tasks): void
+{
+    if (!ps_verbose()) {
+        return;
+    }
+    foreach ($tasks as $task) {
+        $type = (string) ($task['type'] ?? '?');
+        if ($type === 'screenshots') {
+            $hide = array_map('strval', (array) ($task['hide'] ?? []));
+            ps_vlog('task screenshots: ' . count((array) ($task['shots'] ?? [])) . ' in ' . ($task['base'] ?? '?') . ', hidden elements: ' . ($hide === [] ? 'none' : implode(', ', $hide)));
+            foreach ((array) ($task['shots'] ?? []) as $shot) {
+                $viewport = $shot['viewport'] ?? 'desktop';
+                $selector = $shot['selector'] ?? '';
+                ps_vlog(sprintf(
+                    '  shot %s/%s: %s %s, viewport %s%s -> %s',
+                    $shot['language'] ?? '?',
+                    $shot['id'] ?? '?',
+                    strtoupper((string) ($shot['area'] ?? '?')),
+                    ($shot['area'] ?? '') === 'fo' ? ($task['base'] ?? '') . ($shot['path'] ?? '') : (string) ($shot['path'] ?? ''),
+                    is_array($viewport) ? ($viewport['width'] ?? '?') . 'x' . ($viewport['height'] ?? '?') : (string) $viewport,
+                    $selector !== '' && $selector !== [] ? ', selector ' . (is_string($selector) ? $selector : (string) json_encode($selector)) : '',
+                    $shot['out'] ?? '?'
+                ));
+            }
+            continue;
+        }
+        ps_vlog("task $type: " . count((array) ($task['items'] ?? [])) . ' item(s)');
+        foreach ((array) ($task['items'] ?? []) as $item) {
+            $size = isset($item['width']) ? ' (' . $item['width'] . 'x' . ($item['height'] ?? '?') . (!empty($item['transparent']) ? ', transparent' : '') . ')' : (isset($item['size']) ? ' (' . $item['size'] . ' px)' : '');
+            ps_vlog('  ' . ($item['html'] ?? $item['in'] ?? '?') . ' -> ' . ($item['out'] ?? '?') . $size);
+        }
+    }
 }
 
 /**
@@ -89,6 +153,7 @@ function docs_docker_available(): string
         } else {
             $state = '';
         }
+        ps_vlog('Docker: ' . ($state === '' ? 'running (server ' . trim($output) . ')' : $state));
     }
 
     return $state;
@@ -124,8 +189,11 @@ function docs_ensure_image(): array
         return $result;
     }
     if (docs_image_exists()) {
+        ps_vlog('docs image ' . docs_image_tag() . ': present');
+
         return $result = ['error' => ''];
     }
+    ps_vlog('docs image ' . docs_image_tag() . ': not present, building it from ' . DOCS_RESOURCES . '/docs/Dockerfile');
     echo 'Building the docs image ' . docs_image_tag() . " (Chromium + Noto fonts; only the first time, a few minutes)...\n";
     [$code] = docs_exec(['docker', 'build', '-t', docs_image_tag(), '-f', DOCS_RESOURCES . '/docs/Dockerfile', DOCS_RESOURCES . '/docs'], 1800, null, true);
 
@@ -190,11 +258,17 @@ function docs_run_container(array $ctx, array $tasks, ?string $network): array
     $jobDir = $ctx['repo'] . '/.cache/docs/job-' . uniqid();
     @mkdir($jobDir, 0775, true);
     file_put_contents("$jobDir/job.json", json_encode(['tasks' => $tasks], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    ps_vlog('docs container job ' . $jobDir . ($network !== null ? ', network ' . $network : ', no network'));
+    docs_vtasks($tasks);
     $command = array_merge(['docker', 'run', '--rm', '--shm-size=1g'], $network !== null ? ['--network', $network] : [], docs_mount_args($ctx, $jobDir), [docs_image_tag(), 'node', '/runner/runner.cjs', '/job/job.json']);
     [$code, $output] = docs_exec($command, 1800);
     $results = docs_read_json("$jobDir/result.json");
     docs_remove_dir($jobDir);
+    foreach ($results ?? [] as $result) {
+        ps_vlog('  result ' . (!empty($result['ok']) ? 'ok   ' : 'FAIL ') . ($result['out'] ?? $result['id'] ?? '?') . (!empty($result['ok']) ? '' : ': ' . ($result['error'] ?? '?')));
+    }
     if ($results === null) {
+        ps_vlog('docs container job: no result.json (exit code ' . $code . ')');
         return ['error' => 'the docs container failed (exit code ' . $code . '): ' . substr(trim($output), -600), 'results' => []];
     }
 
@@ -296,6 +370,7 @@ function docs_ps_test(array $ctx, array $args): int
 function docs_http_status(string $url): int
 {
     $context = stream_context_create(['http' => ['timeout' => 20, 'ignore_errors' => true, 'follow_location' => 0]]);
+    $start = microtime(true);
     @file_get_contents($url, false, $context);
     $status = 0;
     foreach ($http_response_header ?? [] as $header) {
@@ -303,6 +378,7 @@ function docs_http_status(string $url): int
             $status = (int) $m[1];
         }
     }
+    ps_vdone("GET $url: HTTP " . ($status === 0 ? 'no answer' : $status), $start);
 
     return $status;
 }
@@ -352,6 +428,7 @@ function docs_run_shop_setup(array $ctx, string $container): ?string
     if ($file === null) {
         return null;
     }
+    ps_vlog("shop.setup: $file in container $container");
     if (!is_file($file) || !str_ends_with($file, '.php')) {
         return 'docs.json > shop.setup: ' . $ctx['config']['shop']['setup'] . ' is not a PHP file in docs/';
     }
@@ -389,10 +466,12 @@ function docs_shots_state(array $ctx): array
             $missing[] = (string) ($shot['id'] ?? '?');
         }
     }
+    ps_vlog('screenshots: manifest ' . ($manifest === null ? 'missing' : 'found') . ', ' . count($configured) . ' configured, missing in ' . $ctx['source'] . ': ' . ($missing === [] ? 'none' : implode(', ', $missing)));
     if ($manifest === null || $missing !== []) {
         return ['state' => 'missing', 'message' => 'missing: ' . ($missing === [] ? 'all' : implode(', ', $missing)) . ' (run: ps-module docs screenshots, needs Docker)'];
     }
     $info = ['ps_version' => (string) ($manifest['ps_version'] ?? ''), 'taken' => substr((string) ($manifest['time'] ?? ''), 0, 16), 'fallbacks' => (array) ($manifest['fallbacks'] ?? []), 'failed' => (array) ($manifest['failed'] ?? [])];
+    ps_vlog('screenshots: settings hash ' . ($manifest['config'] ?? '-') . ' (now ' . docs_shots_config_hash($ctx) . '), code fingerprint ' . substr((string) ($manifest['fingerprint'] ?? '-'), 0, 12) . ' (now ' . substr(dod_fingerprint($ctx['repo']), 0, 12) . ')');
     if (($manifest['config'] ?? '') !== docs_shots_config_hash($ctx)) {
         return ['state' => 'stale', 'message' => 'docs.json screenshot settings or languages changed since ' . $info['taken']] + $info;
     }
@@ -417,6 +496,7 @@ function docs_take_screenshots(array $ctx, bool $keep, array $only): array
 {
     $fail = static fn (string $short): array => ['ok' => false, 'short' => $short, 'message' => "Screenshots NOT taken: $short"];
     $shots = array_values(array_filter((array) ($ctx['config']['screenshots'] ?? []), static fn ($s): bool => is_array($s) && ($only === [] || in_array($s['id'] ?? '', $only, true))));
+    ps_vlog('screenshots to take: ' . ($shots === [] ? 'none' : implode(', ', array_map(static fn (array $s): string => (string) ($s['id'] ?? '?'), $shots))) . ($only !== [] ? ' (--only=' . implode(',', $only) . ')' : '') . '; languages: ' . implode(' ', $ctx['languages']) . ($keep ? '; --keep' : ''));
     if ($shots === []) {
         return ['ok' => true, 'short' => '', 'message' => 'No screenshots configured in docs/docs.json.'];
     }
@@ -432,9 +512,13 @@ function docs_take_screenshots(array $ctx, bool $keep, array $only): array
         return $fail($image['error']);
     }
     $default = docs_shop_version($ctx);
+    ps_vlog("default shop version: $default (docs.json > shop.version: " . ($ctx['config']['shop']['version'] ?? 'latest') . '; "latest" = the newest of testing.json)');
     $groups = [];
     foreach ($shots as $shot) {
         $groups[docs_shot_version($ctx, $shot)][] = $shot;
+    }
+    foreach ($groups as $version => $list) {
+        ps_vlog("PrestaShop $version: " . implode(', ', array_map(static fn (array $s): string => (string) ($s['id'] ?? '?'), $list)) . ((string) $version === $default ? ' (the default shop version)' : ' (their own "version")'));
     }
     $results = [];
     $fallbacks = [];
@@ -475,6 +559,7 @@ function docs_take_screenshots(array $ctx, bool $keep, array $only): array
     }
     $manifest = docs_read_json($ctx['docs'] . '/screenshots/manifest.json') ?? [];
     $complete = $failed === [] && $only === [];
+    ps_vlog('screenshots manifest: ' . ($complete ? 'complete run, recorded as up to date for this code' : 'incomplete run (failures or --only): the previous fingerprint is kept'));
     docs_write_json($ctx['docs'] . '/screenshots/manifest.json', [
         '_comment' => 'Generated by ps-module docs screenshots. Do not edit.',
         'ps_version' => $only === [] ? implode(', ', array_keys($groups)) : (string) ($manifest['ps_version'] ?? implode(', ', array_keys($groups))),
@@ -537,6 +622,7 @@ function docs_shots_on_shop(array $ctx, string $version, array $shots, bool $kee
     $port = docs_shop_port($ctx, $version);
     $project = $ctx['module'] . '-ps' . str_replace('.', '', $version);
     $container = docs_shop_container($project);
+    ps_vlog("shop PrestaShop $version: compose project $project, port $port, container " . ($container !== '' ? $container : '(none)'));
     $running = $container !== '' && in_array(docs_http_status("http://localhost:$port/"), [200, 301, 302], true);
     echo "Shop: PrestaShop $version on http://localhost:$port/ (" . ($running ? 'running: deploying the current code' : 'starting it') . ")\n";
     if (docs_ps_test($ctx, [$running ? 'deploy' : 'up', $version]) !== 0) {
@@ -544,6 +630,7 @@ function docs_shots_on_shop(array $ctx, string $version, array $shots, bool $kee
     }
     $container = docs_shop_container($project);
     $network = $container !== '' ? docs_shop_network($container) : '';
+    ps_vlog("shop container $container, network " . ($network !== '' ? $network : '(none)'));
     if ($network === '') {
         return ['error' => "no container/network found for the shop (compose project $project)"];
     }
@@ -554,6 +641,7 @@ function docs_shots_on_shop(array $ctx, string $version, array $shots, bool $kee
     $failures = [];
     $notes = [];
     $installLanguages = (bool) ($ctx['config']['shop']['install_languages'] ?? true);
+    ps_vlog('languages in the shop: ' . ($installed === [] ? 'none found' : implode(' ', array_keys($installed))) . '; install missing ones: ' . ($installLanguages ? 'yes' : 'no (docs.json > shop.install_languages)'));
     foreach ($ctx['languages'] as $iso) {
         $psIso = docs_shop_iso($ctx, $iso);
         if ($iso === $ctx['source'] && isset($installed[$psIso])) {
@@ -574,6 +662,7 @@ function docs_shots_on_shop(array $ctx, string $version, array $shots, bool $kee
     docs_exec(['docker', 'exec', '-u', 'root', $container, 'sh', '-c', 'rm -rf /var/www/html/var/cache/dev/* /var/www/html/var/cache/prod/*'], 120);
     $installed = (array) (docs_shop_probe($container, ['languages'])['languages'] ?? []);
     $configuration = (array) ($ctx['config']['shop']['configuration'] ?? []);
+    ps_vlog('languages after install: ' . implode(' ', array_keys($installed)) . '; shop.configuration: ' . ($configuration === [] ? 'none' : implode(', ', array_keys($configuration))));
     if ($configuration !== []) {
         $result = docs_shop_probe($container, ['config', base64_encode((string) json_encode($configuration))]);
         if (empty($result['ok'])) {
@@ -597,12 +686,15 @@ function docs_shots_on_shop(array $ctx, string $version, array $shots, bool $kee
         $languages[$iso] = ['shop_language' => $shopLanguage];
         if ($shopLanguage !== $iso) {
             $fallbacks[$iso] = $failures[$iso] ?? "PrestaShop $version does not have this language";
+            ps_vlog("$iso: uses the {$ctx['source']} screenshots ({$fallbacks[$iso]})");
             continue;
         }
         $list = array_values(array_filter($shots, static fn (array $s): bool => empty($s['languages']) || in_array($iso, (array) $s['languages'], true)));
         if ($list === []) {
+            ps_vlog("$iso: no screenshots for this language");
             continue;
         }
+        ps_vlog("$iso: shop language $psIso (id " . ($installed[$psIso]['id'] ?? '?') . '), locale ' . ($ctx['catalog'][$iso]['locale'] ?? 'en-US'));
         docs_shop_probe($container, ['employee-lang', $psIso]);
         $jobShots = [];
         foreach ($list as $shot) {
@@ -641,6 +733,9 @@ function docs_shots_on_shop(array $ctx, string $version, array $shots, bool $kee
         $results = array_merge($results, $run['results']);
     }
     docs_shop_probe($container, ['employee-lang', docs_shop_iso($ctx, $ctx['source'])]);
+    if ($running || $keep) {
+        ps_vlog("shop PrestaShop $version left running (" . ($running ? 'it was already running' : '--keep') . ')');
+    }
     if (!$running && !$keep) {
         echo "Stopping the shop PrestaShop $version (it was started for the screenshots; --keep leaves it running).\n";
         docs_ps_test($ctx, ['down', $version]);

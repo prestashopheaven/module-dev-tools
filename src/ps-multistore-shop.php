@@ -35,6 +35,8 @@
  *                                                        enables/disables the module in one shop, as Module
  *                                                        Manager does in that shop context ("bin/console
  *                                                        --id_shop" is rejected on PrestaShop 9)
+ *
+ * With PS_MODULE_VERBOSE=1 (passed in by ps-test.php) it reports its steps on STDERR.
  */
 
 $root = getenv('_PS_ROOT_DIR_') ?: '/var/www/html';
@@ -48,6 +50,7 @@ const MS_STATE_FILE = '/tmp/ps-multistore-state.json';
 
 $command = $argv[1] ?? '';
 $module = $argv[2] ?? '';
+msShopLog("command $command" . ($module !== '' ? ", module $module" : '') . (isset($argv[3]) ? ", argument {$argv[3]}" : '') . ", shop $root");
 
 switch ($command) {
     case 'setup':
@@ -86,6 +89,7 @@ function msSetup(): array
 {
     $db = Db::getInstance();
     Configuration::updateGlobalValue('PS_MULTISHOP_FEATURE_ACTIVE', 1);
+    msShopLog('setup: PS_MULTISHOP_FEATURE_ACTIVE = 1');
 
     $group2 = (int) $db->getValue('SELECT id_shop_group FROM `' . _DB_PREFIX_ . 'shop_group` WHERE name = \'Group 2\'');
     if (!$group2) {
@@ -97,18 +101,26 @@ function msSetup(): array
         $group->active = true;
         $group->add();
         $group2 = (int) $group->id;
+        msShopLog("setup: created shop group 'Group 2' (id $group2)");
+    } else {
+        msShopLog("setup: shop group 'Group 2' exists (id $group2)");
     }
     foreach ([['Shop 2', 1, 'shop2/'], ['Shop 3', $group2, 'shop3/']] as [$name, $idGroup, $virtual]) {
         if (Shop::getIdByName($name)) {
+            msShopLog("setup: '$name' exists (id " . Shop::getIdByName($name) . ')');
             continue;
         }
         $created = msCreateShop($name, $idGroup, $virtual, []);
         if (is_string($created)) {
+            msShopLog("setup: $created");
+
             return ['ok' => false, 'problems' => [$created]];
         }
     }
+    msShopLog('setup: rebuilding the search index');
     Search::indexation(true);
     $active = Shop::isFeatureActive();
+    msShopLog('setup: multistore ' . ($active ? 'active' : 'NOT active'));
 
     return [
         'ok' => $active,
@@ -133,6 +145,7 @@ function msCreateShop(string $name, int $idGroup, string $virtualUri, array $ext
     // (count() on false is a TypeError on PHP 8).
     $categories = array_map('intval', array_column($db->executeS('SELECT id_category FROM `' . _DB_PREFIX_ . 'category_shop` WHERE id_shop = 1') ?: [], 'id_category'));
     $_POST['categoryBox'] = $categories;
+    msShopLog("creating shop '$name' in group $idGroup at {$main['physical_uri']}$virtualUri (domain {$main['domain']}), " . count($categories) . ' categories');
 
     $shop = new Shop();
     $shop->name = $name;
@@ -165,6 +178,7 @@ function msCreateShop(string $name, int $idGroup, string $virtualUri, array $ext
         'feature', 'group', 'hook_module', 'image', 'lang', 'manufacturer', 'meta_lang', 'module',
         'product', 'product_attribute', 'stock_available', 'store', 'supplier', 'tax_rules_group', 'zone',
     ], $extraImport), true);
+    msShopLog("shop '$name' has id {$shop->id}; copying the data of shop 1: " . implode(', ', array_keys($import)));
     $shop->copyShopData(1, $import);
     $shop->associateSuperAdmins();
     Category::updateFromShop(array_values(array_unique(array_merge([(int) Configuration::get('PS_ROOT_CATEGORY')], $categories))), (int) $shop->id);
@@ -172,6 +186,7 @@ function msCreateShop(string $name, int $idGroup, string $virtualUri, array $ext
     Shop::resetStaticCache();
     Shop::cacheShops(true);
     Tools::generateHtaccess();
+    msShopLog("shop '$name' ready (categories, super admins, .htaccess)");
 
     return (int) $shop->id;
 }
@@ -207,8 +222,10 @@ function msIsolation(string $module): array
     $ids = msIds();
     $shopGroups = [1 => 1, $ids['shop2'] => 1, $ids['shop3'] => $ids['group2']];
     $state = ['ids' => $ids, 'keys' => []];
+    $keys = msConfigurationKeys($module);
+    msShopLog('isolation: shop ids ' . json_encode($ids) . ', keys ' . json_encode($keys) . ' (true = string value)');
 
-    foreach (msConfigurationKeys($module) as $key => $isString) {
+    foreach ($keys as $key => $isString) {
         $global = Configuration::get($key, null, 0, 0);
         // Before: every shop inherits the global value.
         foreach ($shopGroups as $idShop => $idGroup) {
@@ -222,6 +239,7 @@ function msIsolation(string $module): array
             ? ['gl' => "ms-gl-$key.", 's2' => "ms-s2-$key.", 'g2' => "ms-g2-$key."]
             : ['gl' => (string) $global, 's2' => (string) $global, 'g2' => (string) $global];
         $state['keys'][$key] = ['string' => $isString, 'global' => $global, 'markers' => $markers];
+        msShopLog("isolation: $key: global " . json_encode($global) . ', writing ' . json_encode($markers));
         if ($isString) {
             Configuration::updateGlobalValue($key, $markers['gl']);
         }
@@ -243,6 +261,7 @@ function msIsolation(string $module): array
         }
     }
     file_put_contents(MS_STATE_FILE, json_encode($state));
+    msShopLog('isolation: state saved in ' . MS_STATE_FILE . ', ' . count($problems) . ' problem(s)');
 
     return ['ok' => $problems === [], 'problems' => $problems, 'keys' => array_keys($state['keys'])];
 }
@@ -255,6 +274,7 @@ function msIsolation(string $module): array
 function msReset(): array
 {
     $state = msState();
+    msShopLog('reset: keys ' . implode(', ', array_keys($state['keys'] ?? [])) . ' (state from ' . MS_STATE_FILE . ')');
     foreach ($state['keys'] ?? [] as $key => $info) {
         Configuration::deleteFromGivenContext($key, null, (int) $state['ids']['shop2']);
         Configuration::deleteFromGivenContext($key, (int) $state['ids']['group2'], 0);
@@ -276,6 +296,7 @@ function msKeepCheck(): array
     $state = msState();
     $problems = [];
     Configuration::clearConfigurationCacheForTesting();
+    msShopLog('keep-check: keys ' . implode(', ', array_keys($state['keys'] ?? [])));
     foreach ($state['keys'] ?? [] as $key => $info) {
         $s2 = Configuration::get($key, null, 1, (int) $state['ids']['shop2']);
         if (!msHasScope($key, 's' . $state['ids']['shop2']) || (string) $s2 !== $info['markers']['s2']) {
@@ -311,6 +332,7 @@ function msDeleteShop(string $module): array
     }
     $idShop = $created;
     $problems = [];
+    msShopLog("delete-shop: temporary shop $idShop created");
     $instance = Module::getInstanceByName($module);
     if ($instance instanceof Module
         && !(bool) $db->getValue('SELECT 1 FROM `' . _DB_PREFIX_ . 'module_shop` WHERE id_module = ' . (int) $instance->id . ' AND id_shop = ' . $idShop)) {
@@ -321,6 +343,7 @@ function msDeleteShop(string $module): array
     }
 
     $shop = new Shop($idShop);
+    msShopLog("delete-shop: deleting shop $idShop");
     if (Shop::hasDependency($idShop) || !$shop->delete()) {
         return ['ok' => false, 'problems' => ["Deleting the temporary shop $idShop failed: " . $db->getMsgError()]];
     }
@@ -332,6 +355,7 @@ function msDeleteShop(string $module): array
         $columns = array_column($db->executeS('SHOW COLUMNS FROM `' . bqSQL($table) . '`') ?: [], 'Field');
         if (in_array('id_shop', $columns, true)) {
             $left = (int) $db->getValue('SELECT COUNT(*) FROM `' . bqSQL($table) . '` WHERE id_shop = ' . $idShop);
+            msShopLog("delete-shop: $table has $left row(s) of shop $idShop");
             if ($left > 0) {
                 $problems[] = "$table still has $left row(s) of the deleted shop $idShop (MS-08: clean up in hookActionObjectShopDeleteAfter).";
             }
@@ -348,6 +372,7 @@ function msDeleteShop(string $module): array
         'SELECT name FROM `' . _DB_PREFIX_ . 'configuration` WHERE id_shop = ' . $idShop
         . ' AND name LIKE \'' . pSQL(str_replace('_', '\_', strtoupper($module))) . '\\\\_%\''
     ) ?: [], 'name');
+    msShopLog('delete-shop: core rows left ' . json_encode($core) . ', configuration rows left ' . json_encode($configuration));
 
     return ['ok' => $problems === [], 'problems' => $problems, 'configuration_left' => $configuration, 'core_rows_left' => $core];
 }
@@ -365,15 +390,18 @@ function msToggleInShop(string $module, bool $enable, int $idShop): array
     if (!$kernel) {
         $class = is_file(_PS_ROOT_DIR_ . '/app/AdminKernel.php') ? 'AdminKernel' : 'AppKernel'; // PS 9 : PS 8
         require_once _PS_ROOT_DIR_ . '/app/' . $class . '.php';
+        msShopLog("booting $class (" . _PS_ENV_ . ')');
         $kernel = new $class(_PS_ENV_, _PS_MODE_DEV_);
         $kernel->boot();
     }
+    msShopLog(($enable ? 'enable' : 'disable') . " $module in the context of shop $idShop");
     Shop::setContext(Shop::CONTEXT_SHOP, $idShop);
     $instance = Module::getInstanceByName($module);
     if (!$instance instanceof Module) {
         return ['ok' => false, 'problems' => ["Module $module cannot be loaded."]];
     }
     $ok = $enable ? $instance->enable() : $instance->disable();
+    msShopLog(($enable ? 'enable' : 'disable') . ($ok ? ' succeeded' : ' failed'));
 
     return ['ok' => (bool) $ok, 'problems' => $ok ? [] : [($enable ? 'Enabling' : 'Disabling') . " the module in shop $idShop failed: " . implode(' ', $instance->getErrors())]];
 }
@@ -393,6 +421,7 @@ function msFindValue(string $module, string $value): array
     ) ?: [] as $row) {
         $rows[] = ['name' => $row['name'], 'scope' => msScopeOf($row)];
     }
+    msShopLog('find-value ' . json_encode($value) . ': ' . count($rows) . ' row(s)');
 
     return $rows;
 }
@@ -502,4 +531,15 @@ function msShops(): array
 function msOut(array $result): void
 {
     echo json_encode($result, JSON_UNESCAPED_SLASHES) . "\n";
+}
+
+/**
+ * Prints a verbose line on STDERR when PS_MODULE_VERBOSE is set. Local copy of ps_vlog(): this
+ * script runs in the container, where src/verbose.php is not available.
+ */
+function msShopLog(string $message): void
+{
+    if (in_array(strtolower((string) getenv('PS_MODULE_VERBOSE')), ['1', 'true', 'yes', 'on'], true)) {
+        fwrite(STDERR, '[v ' . gmdate('H:i:s') . '] ps-multistore-shop: ' . $message . "\n");
+    }
 }

@@ -47,6 +47,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/dod.php';
+require_once __DIR__ . '/verbose.php';
 
 /** Comment marker that excludes the call on the same or the next line from extraction. */
 const TR_IGNORE_MARKER = 'translations-ignore';
@@ -81,6 +82,8 @@ foreach ($argvRest as $arg) {
 }
 
 $ctx = tr_context($moduleDir);
+ps_vlog("translations: $command" . ($positional !== [] ? ' ' . implode(' ', $positional) : '') . " for {$ctx['name']}, domains {$ctx['prefix']}*, source {$ctx['source']}, "
+    . count($ctx['targets']) . ' target language(s): ' . implode(' ', $ctx['targets']) . ' (' . ($ctx['hasI18n'] ? "{$ctx['repoDir']}/i18n.json" : 'no i18n.json: source language only') . "), catalogues in {$ctx['catalogueDir']}");
 
 exit(match ($command) {
     'extract' => tr_cmd_extract($ctx, $options),
@@ -238,7 +241,11 @@ function tr_extract(array $ctx): array
     $core = [];
     $problems = [];
     $domainPattern = '/^' . preg_quote($ctx['prefix'], '/') . '[A-Z][A-Za-z0-9]*$/';
-    foreach (tr_source_files($ctx['moduleDir']) as $relative) {
+    $sourceFiles = tr_source_files($ctx['moduleDir']);
+    $types = array_count_values(array_map(static fn (string $f): string => pathinfo($f, PATHINFO_EXTENSION), $sourceFiles));
+    ps_vlog('translations: scanning ' . count($sourceFiles) . ' file(s) (' . implode(', ', array_map(static fn (string $t, int $n): string => "$n .$t", array_keys($types), $types))
+        . '; skipped folders: ' . implode(', ', TR_SKIP_DIRS) . ')');
+    foreach ($sourceFiles as $relative) {
         $code = (string) file_get_contents($ctx['moduleDir'] . '/' . $relative);
         if (str_ends_with($relative, '.php')) {
             $found = tr_extract_php($code, $ctx['adminDomain']);
@@ -272,6 +279,11 @@ function tr_extract(array $ctx): array
     unset($sources);
     ksort($core, SORT_STRING);
     $problems = array_merge($problems, tr_check_core($ctx, $core));
+    foreach ($strings as $domain => $sources) {
+        ps_vlog("translations: $domain: " . count($sources) . ' text(s)');
+    }
+    ps_vlog('translations: ' . array_sum(array_map('count', $core)) . ' text(s) in ' . count($core) . ' core domain(s) (translated by PrestaShop), '
+        . count($problems) . ' source problem(s)');
 
     return ['strings' => $strings, 'core' => $core, 'problems' => $problems];
 }
@@ -296,8 +308,11 @@ function tr_check_core(array $ctx, array $core): array
         }
     }
     if ($dirs === []) {
+        ps_vlog('translations: core texts not checked (no PrestaShop catalogues in the cache_dir of tests/phpstan/config.json)');
+
         return [];
     }
+    ps_vlog('translations: core texts checked against PrestaShop ' . implode(', ', array_keys($dirs)) . ' (' . implode(', ', $dirs) . ')');
     $problems = [];
     foreach ($core as $domain => $sources) {
         $known = [];
@@ -1021,6 +1036,7 @@ function tr_save_catalogue(array $ctx, string $iso, array $catalogue): void
         'strings' => $strings === [] ? new stdClass() : $strings,
         'mails' => $mails === [] ? new stdClass() : $mails,
     ]);
+    ps_vlog("translations: saved {$ctx['catalogueDir']}/$iso.json (" . array_sum(array_map('count', $strings)) . ' text(s), ' . count($mails) . ' mail version(s))');
 }
 
 /**
@@ -1151,6 +1167,8 @@ function tr_analyse(array $ctx, array $extraction, array $catalogues): array
             }
         }
         $result[$iso] = $state;
+        ps_vlog("translations: $iso: " . count($state['missing']) . ' missing, ' . count($state['machine']) . ' machine, '
+            . count($state['broken']) . ' broken, ' . count($state['obsolete']) . ' obsolete');
     }
 
     return $result;
@@ -1357,6 +1375,8 @@ function tr_build(array $ctx, array $extraction, array $catalogues, bool $write)
             tr_save_catalogue($ctx, $iso, $catalogue);
         }
     }
+    ps_vlog('translations: build ' . ($write ? '' : '(dry run) ') . count($expected) . ' XLF file(s) expected, ' . count($changes) . ' change(s)'
+        . ($changes !== [] ? ":\n  " . implode("\n  ", $changes) : ''));
 
     return $changes;
 }
@@ -1741,6 +1761,7 @@ function tr_cmd_apply(array $ctx, array $args, array $options): int
     foreach (array_keys($changed) as $iso) {
         tr_save_catalogue($ctx, $iso, $catalogues[$iso]);
     }
+    ps_vlog('translations: apply ' . ($file === '-' ? 'from stdin' : $file) . ($machine !== null ? ", marked machine ($machine)" : ', marked reviewed'));
     echo "Applied $applied translation(s) to " . count($changed) . " catalogue(s)" . ($errors > 0 ? ", $errors rejected" : '') . ".\n";
     tr_rebuild($ctx);
 
@@ -1756,17 +1777,22 @@ function tr_cmd_apply(array $ctx, array $args, array $options): int
 function tr_cmd_fill(array $ctx): int
 {
     $glossary = tr_glossary();
+    ps_vlog('translations: glossary ' . dirname(__DIR__) . '/resources/translations/glossary.json, ' . count($glossary) . ' text(s)');
     $extraction = tr_extract($ctx);
     $catalogues = tr_load_all($ctx);
     $filled = 0;
     foreach (tr_analyse($ctx, $extraction, $catalogues) as $iso => $state) {
         $changed = false;
+        $before = $filled;
         foreach ($state['missing'] as [$domain, $source]) {
             if (isset($glossary[$source][$iso])) {
                 $catalogues[$iso]['strings'][$domain][$source] = ['text' => (string) $glossary[$source][$iso], 'machine' => null];
                 $changed = true;
                 ++$filled;
             }
+        }
+        if ($state['missing'] !== []) {
+            ps_vlog("translations: $iso: " . ($filled - $before) . ' of ' . count($state['missing']) . ' missing text(s) found in the glossary');
         }
         if ($changed || !is_file($ctx['catalogueDir'] . "/$iso.json")) {
             tr_save_catalogue($ctx, $iso, $catalogues[$iso]);
@@ -1796,7 +1822,10 @@ function tr_cmd_auto(array $ctx, array $args): int
 
         return 1;
     }
+    // Never shown in verbose output.
+    ps_vsecret($key);
     $isos = tr_isos($ctx, $args);
+    ps_vlog('translations: DeepL for ' . implode(' ', $isos) . ' (key from ' . (getenv('DEEPL_API_KEY') ? 'the environment' : 'a .env file') . ', ' . (str_ends_with($key, ':fx') ? 'free' : 'pro') . ' API)');
     $extraction = tr_extract($ctx);
     $catalogues = tr_load_all($ctx);
     $analysis = tr_analyse($ctx, $extraction, $catalogues);
@@ -1829,6 +1858,7 @@ function tr_cmd_auto(array $ctx, array $args): int
             }
         }
         tr_save_catalogue($ctx, $iso, $catalogues[$iso]);
+        ps_vlog("translations: $iso: DeepL done, " . count($missing) . ' text(s) sent');
     }
     echo "DeepL: $total translation(s) added (marked machine, review them: translations todo --with-machine)" . ($failed > 0 ? ", $failed failed" : '') . ".\n";
     tr_rebuild($ctx);
@@ -2143,6 +2173,9 @@ function tr_deepl(string $key, array $texts, string $sourceLang, string $targetL
         'preserve_formatting' => true,
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     $headers = ['Authorization: DeepL-Auth-Key ' . $key, 'Content-Type: application/json'];
+    ps_vsecret($key);
+    ps_vlog("translations: POST $url (" . count($texts) . " text(s), $sourceLang -> $targetLang, " . strlen($body) . ' bytes, key in the Authorization header)');
+    $start = microtime(true);
 
     if (function_exists('curl_init')) {
         $curl = curl_init($url);
@@ -2171,6 +2204,7 @@ function tr_deepl(string $key, array $texts, string $sourceLang, string $targetL
         preg_match('#HTTP/\S+\s+(\d{3})#', (string) ($meta['wrapper_data'][0] ?? ''), $m);
         $status = (int) ($m[1] ?? 0);
     }
+    ps_vdone("DeepL HTTP $status, " . strlen((string) $response) . ' bytes', $start);
     $data = json_decode((string) $response, true);
     if ($status !== 200 || !is_array($data) || !isset($data['translations'])) {
         $message = is_array($data) && isset($data['message']) ? (string) $data['message'] : substr(trim((string) $response), 0, 200);

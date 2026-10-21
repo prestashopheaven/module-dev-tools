@@ -30,6 +30,8 @@
  *     module's tables (MS-08, MS-16)
  */
 
+require_once __DIR__ . '/verbose.php';
+
 /** Marker that every configuration key gets in shop 2 / group 2 / globally (ps-multistore-shop.php). */
 const MS_MARKER = '/ms-(gl|s2|g2)-([A-Z0-9_]+)\./';
 
@@ -63,6 +65,7 @@ function multistoreRound(Shop $shop, array $flags = []): array
     $name = $config['module'];
     $results = [];
     out("\n-- Multistore round (PrestaShop {$shop->version}) --");
+    $roundStart = microtime(true);
 
     $shop->console('uninstall');
     $setup = msShopScript($shop, 'setup');
@@ -77,15 +80,20 @@ function multistoreRound(Shop $shop, array $flags = []): array
     $results['multistore: install from bin/console'] = $shop->console('install');
     $snapshot = $shop->snapshot();
     $allShops = msShopIds($setup);
+    ps_vlog('multistore: shops ' . json_encode($allShops) . ', ids ' . json_encode($setup['ids'] ?? []));
     $results['multistore: install covers every shop'] = msInstalledEverywhere($snapshot, $allShops);
     // The integration suite again, now with multistore active (tests that skip without it run here).
     if (!empty($config['suites']['integration']) && !in_array('--skip-integration', $flags, true)) {
         $results['multistore: integration'] = $shop->integration();
+    } else {
+        ps_vlog('multistore: integration suite skipped (' . (empty($config['suites']['integration']) ? 'not in testing.json' : '--skip-integration') . ')');
     }
 
     // 2. Back office: the configuration page per shop context (before the markers, see below).
     if (!empty($snapshot['configurable'])) {
         $results['multistore: configuration page per shop context'] = msBackOfficeForm($shop, (int) ($setup['ids']['shop2'] ?? 2), (int) ($setup['ids']['group2'] ?? 2));
+    } else {
+        ps_vlog('multistore: no configuration page (getContent), back-office form test skipped');
     }
 
     // 3. Values per shop and group, in PHP and in the front office.
@@ -101,6 +109,8 @@ function multistoreRound(Shop $shop, array $flags = []): array
     // 5. Upgrade from earlier releases keeps the values per shop and group.
     if (($config['upgrade_from'] ?? 'none') !== 'none' && !in_array('--skip-upgrade', $flags, true)) {
         $results += msUpgradeTests($shop, $allShops);
+    } else {
+        ps_vlog('multistore: upgrade part skipped (' . (($config['upgrade_from'] ?? 'none') === 'none' ? 'upgrade_from is none' : '--skip-upgrade') . ')');
     }
 
     // 6. Uninstall leaves nothing in any shop.
@@ -115,6 +125,7 @@ function multistoreRound(Shop $shop, array $flags = []): array
 
     // Leave the current version installed (as the normal round does).
     $shop->console('install');
+    ps_vdone('multistore round', $roundStart);
 
     return $results;
 }
@@ -126,13 +137,28 @@ function multistoreRound(Shop $shop, array $flags = []): array
  */
 function msShopScript(Shop $shop, string $command, string $arguments = ''): array
 {
+    ps_vlog("multistore: ps-multistore-shop.php $command" . ($arguments !== '' ? ' ' . $arguments : ''));
     $shop->upload(__DIR__ . '/ps-multistore-shop.php', '/tmp/ps-multistore-shop.php');
     $result = $shop->exec('php -d memory_limit=1G /tmp/ps-multistore-shop.php ' . $command . ($arguments !== '' ? ' ' . $arguments : '') . ' 2>&1');
     $lines = explode("\n", $result['output']);
+    // Verbose lines of the script (STDERR, merged by the 2>&1 above): show them and keep them out of the answer.
+    $verbose = preg_grep('/^\[v [\d:]+\] /', $lines) ?: [];
+    if ($verbose !== []) {
+        foreach ($verbose as $line) {
+            ps_vlog('  container: ' . (string) preg_replace('/^\[v [\d:]+\] /', '', $line));
+        }
+        $lines = array_values(array_diff_key($lines, $verbose));
+        $result['output'] = trim(implode("\n", $lines));
+    }
     $data = json_decode((string) end($lines), true);
     if (!is_array($data)) {
+        ps_vlog("multistore: ps-multistore-shop.php $command gave no JSON answer (exit {$result['code']})");
+
         return ['ok' => false, 'problems' => ["ps-multistore-shop.php $command failed:\n" . lastLines($result['output'], 20)]];
     }
+    // Lines before the answer (PHP notices of the shop) are not shown otherwise.
+    $extra = trim(implode("\n", array_slice($lines, 0, -1)));
+    ps_vlog("multistore: $command answered " . json_encode($data, JSON_UNESCAPED_SLASHES) . ($extra !== '' ? "\n    other output:\n" . vIndent($extra) : ''));
 
     return $data;
 }
@@ -174,6 +200,7 @@ function msShopIds(array $setup): array
  */
 function msClearCache(Shop $shop): void
 {
+    ps_vlog('multistore: emptying the Symfony caches (var/cache/dev, var/cache/prod)');
     $shop->exec('rm -rf /var/www/html/var/cache/dev/* /var/www/html/var/cache/prod/*', 'root');
 }
 
@@ -291,6 +318,11 @@ function msFrontOfficeMarkers(Shop $shop): array
     }
     foreach ($seen as $base => $keys) {
         foreach ($keys as $key => $scopes) {
+            ps_vlog("multistore: $base shows the marker(s) " . implode(', ', array_keys($scopes)) . " of $key (expected {$expected[$base]})");
+        }
+    }
+    foreach ($seen as $base => $keys) {
+        foreach ($keys as $key => $scopes) {
             foreach (array_keys($scopes) as $scope) {
                 if ($scope !== $expected[$base]) {
                     $problems[] = "$base shows the value of " . ['gl' => 'all shops', 's2' => 'shop 2', 'g2' => 'group 2'][$scope] . " for $key (MS-04: read the value of the current shop)";
@@ -329,6 +361,7 @@ function msDisableInOneShop(Shop $shop, array $allShops, int $shop2): array
     $results['multistore: disable in shop 2 only'] = msToggleInShop($shop, 'disable', $shop2);
     $snapshot = $shop->snapshot();
     $without2 = array_values(array_diff($allShops, [$shop2]));
+    ps_vlog("multistore: disabled in shop $shop2; enabled in shops " . json_encode($snapshot['module_shops'] ?? []) . ', expected ' . json_encode($without2));
     $problems = [];
     if (($snapshot['module_shops'] ?? []) !== $without2) {
         $problems[] = 'module enabled in shops ' . json_encode($snapshot['module_shops'] ?? []) . ', expected ' . json_encode($without2);
@@ -349,6 +382,7 @@ function msDisableInOneShop(Shop $shop, array $allShops, int $shop2): array
             continue;
         }
         $url = "http://localhost:{$shop->port}/shop2/index.php?fc=module&module={$config['module']}&controller=$controller";
+        ps_vlog("multistore: front controller $controller in shop 2 must redirect (301/302/404)");
         [$status] = httpGet($url);
         if (!in_array($status, [301, 302, 404], true)) {
             $problems[] = "front controller $controller answers HTTP $status in shop 2 while the module is disabled there (expected a redirect)";
@@ -403,6 +437,7 @@ function msBackOfficeForm(Shop $shop, int $shop2, int $group2): array
     }
     $numeric = msIsNumber((string) ($page['fields'][$textField] ?? ''));
     $allMarker = msFormMarker('all', $numeric);
+    ps_vlog("multistore form: testing field $textField (" . ($numeric ? 'numeric' : 'text') . "), all shops value $allMarker");
     $fields = $page['fields'];
     $fields[$textField] = $allMarker;
     $save = msSubmit($jar, $page, $fields);
@@ -414,6 +449,7 @@ function msBackOfficeForm(Shop $shop, int $shop2, int $group2): array
     }
     $key = $rows[0]['name'] ?? null;
     $checkbox = (string) preg_replace('/\[([^\[\]]+)\]$/', '[multistore_$1]', $textField);
+    ps_vlog('multistore form: all shops saved ' . json_encode($rows) . ($save !== null ? " (error: $save)" : '') . '; configuration key ' . ($key ?? '(none)') . ", checkbox $checkbox");
 
     // Shop 2 and group 2: tick = own value, untick = inherit again.
     foreach (['shop 2' => ['s-' . $shop2, 's' . $shop2], 'group 2' => ['g-' . $group2, 'g' . $group2]] as $label => [$context, $scope]) {
@@ -430,6 +466,7 @@ function msBackOfficeForm(Shop $shop, int $shop2, int $group2): array
             break;
         }
         $marker = msFormMarker($scope[0] === 's' ? 'shop' : 'group', $numeric, $scope);
+        ps_vlog("multistore form: $label context ($context), checkbox ticked, value $marker");
         $fields = $page['fields'];
         $fields[$checkbox] = $page['checkboxes'][$checkbox];
         $fields[$textField] = $marker;
@@ -458,6 +495,7 @@ function msBackOfficeForm(Shop $shop, int $shop2, int $group2): array
         // Untick: the browser no longer sends the checkbox, and the field is disabled again (MultistoreConfigField).
         $fields = $page['fields'];
         unset($fields[$checkbox], $fields[$textField]);
+        ps_vlog("multistore form: $label context, checkbox unticked");
         $save = msSubmit($jar, $page, $fields);
         if ($save !== null) {
             $problems[] = "$label without checkbox: saving failed: $save";
@@ -480,6 +518,7 @@ function msBackOfficeLogin(Shop $shop): array|string
     global $config;
     $admin = "http://localhost:{$shop->port}/admin-dev/index.php";
     $jar = (string) tempnam(sys_get_temp_dir(), 'psms');
+    ps_vlog('multistore form: logging in to the back office as demo@prestashop.com');
     [, $loginPage, $loginUrl] = curlRequest($admin . '?controller=AdminLogin', $jar);
     $fields = hiddenInputs($loginPage);
     $fields['email'] = 'demo@prestashop.com';
@@ -513,6 +552,7 @@ function msFormPage(string $jar, string $url, string $context): array|string
     // then renders the page in that context.
     $switch = preg_replace('/([?&])setShopContext=[^&]*&?/', '$1', $url);
     $switch .= (str_contains((string) $switch, '?') ? '&' : '?') . 'setShopContext=' . $context;
+    ps_vlog('multistore form: shop context ' . ($context === '' ? 'all shops' : $context));
     curlRequest((string) $switch, $jar);
     [$status, $html, $final] = curlRequest($url, $jar);
     if ($status !== 200) {
@@ -629,6 +669,7 @@ function msFirstTextField(array $page): ?string
  */
 function msSubmit(string $jar, array $page, array $fields): ?string
 {
+    ps_vlog('multistore form: submitting ' . count($fields) . ' field(s) to ' . $page['action']);
     [$status, $html, $final] = curlRequest($page['action'], $jar, $fields);
     if ($status !== 200) {
         return "HTTP $status ($final)";
@@ -679,12 +720,14 @@ function msUpgradeTests(Shop $shop, array $allShops): array
     if (($config['upgrade_from'] ?? 'all') === 'previous') {
         $tags = array_slice($tags, -1, 1, true);
     }
+    ps_vlog("multistore: upgrade tests to $current from " . ($tags === [] ? 'nothing (no earlier release tags)' : implode(', ', array_keys($tags))));
     if ($tags === []) {
         return ['multistore: upgrade' => ['ok' => true, 'output' => 'skipped: no earlier release tags']];
     }
     $results = [];
     foreach ($tags as $tag => $version) {
         $label = "multistore: upgrade $version -> $current keeps shop values";
+        ps_vlog("$label: install $tag, write values per shop and group, upgrade, check they are kept");
         $shop->console('uninstall');
         $old = exportRelease($tag);
         if ($old === null) {

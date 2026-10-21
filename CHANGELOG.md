@@ -1,8 +1,69 @@
 # Changelog
 
+## [1.16.0] - 2026-10-21
+
+### Toegevoegd
+- `-v` / `--verbose` voor elk commando (overal op de regel, of `PS_MODULE_VERBOSE=1`): elke stap, elk gestart programma
+  met map, exitcode en tijd, gelezen instellingen, en bij `publish`/`demo-site` de SSH-login, elke upload, elk
+  servercommando en elk HTTP-verzoek; `demo-site.sh`, `demo-install.php`, `demo-settings.php` en
+  `demo-server-check.sh` melden op de server dan ook elke stap (`VERBOSE=1`). Op STDERR, geheimen als `***`
+  (`src/verbose.php`, `src/publish-sftp.php`).
+- `COMMANDS.md`: alle commando's met al hun parameters, opties en standaardwaarden, ook die van `demo-site.sh` op de
+  server.
+- `demo-site check`: controleert de demoserver zonder iets te wijzigen (commando's, PHP-versie en -extensies, webserver,
+  winkelmap, databasevariabelen via de eigen `parameters.php`, wat PHP achter de webserver ziet, of de server de eigen
+  site bereikt).
+- `demo-site install-prestashop [<versie>]`: installeert PrestaShop op de demoserver vanuit de lokale cache, met de
+  database uit `.db_credentials` (alleen via een privébestand, nooit op een opdrachtregel), de taalpakketten van de
+  lokale demo en zonder demoproducten; een mislukte poging kan opnieuw.
+- Alle uitvoer van `ps-module publish`/`demo-site` wordt gemaskeerd: host, gebruiker, wachtwoorden, sleutels en de
+  database-instellingen verschijnen als `***`.
+- Demowinkel: mappen die niet bij de demo horen (docs-mappen met `.docs-site`, `.well-known`, `DEMO_SITE_KEEP_PATHS`)
+  zitten niet in snapshots en blijven bij een reset staan; `publish docs` zet de `.docs-site`-markering.
+- Demowinkel: de rooktest zoekt zelf een route als de server de eigen site niet bereikt (127.0.0.1, eigen adressen).
+- Demowinkel: HTTPS achter een proxy (Cloudflare "Flexible", load balancer): `HTTPS=on` uit `X-Forwarded-Proto` /
+  `CF-Visitor` bovenaan de `.htaccess`, en de inlog-redirect gebruikt het https-adres van de winkel.
+- `DEMO_SITE_CRON_INSTALL=no`: de nachtelijke taak niet in crontab (bij Hestia/Plesk in het paneel inplannen).
+- `demo-site vps-snapshot --dry-run` logt echt in bij TransIP (alleen-lezen) en toont de VPS en snapshots.
+
+- Cloudflare: na `publish docs` en `publish demo` worden de PDF's en de statische bestanden van de module (`logo.png`,
+  `views/**`) uit de Cloudflare-cache gehaald (`CLOUDFLARE_API_TOKEN` met Cache Purge + `CLOUDFLARE_ZONE_ID`); zonder die
+  instellingen staan de adressen in de uitvoer om met de hand te purgen. Ze houden in elke versie hetzelfde adres, dus
+  Cloudflare bleef het oude logo tonen.
+
+### Gewijzigd
+- Rooktest op de server: de route naar de eigen site wordt gezocht met `robots.txt` (statisch) en 30 s in plaats van
+  de homepage en 10 s. Vlak na het legen van de cache duurde de homepage langer, waardoor geen route gevonden werd,
+  de test via Cloudflare HTTP 000 gaf en een geslaagde deploy werd teruggedraaid.
+- `demo-settings.php` schrijft elk bestand via een tijdelijk bestand + rename en stopt als dat niet lukt. Op de server
+  hoorde `start/index.html` bij root (een commando als root); de introductiepagina bleef zo stil op een oude versie staan
+  terwijl de uitvoer "geschreven" meldde. Nieuw: `demo-site settings intro` (alleen de introductiepagina).
+- `demo-site.sh deploy` test de winkel ook vóór de install en draait alleen terug op pagina's die daarna stuk zijn:
+  instellingen die met de hand veranderd zijn (bijv. vriendelijke URL's of demomodus uit) houden een module niet meer
+  tegen; ze staan wel in de uitvoer.
+- `publish demo` (`demo-site.sh deploy`) installeert of upgradet alleen die module in de winkel zoals hij is: geen
+  restore van de laatste snapshot meer vooraf (die zette de hele winkel terug en overschreef wijzigingen op de server),
+  en alleen de introductiepagina wordt herschreven (`DEMO_SETTINGS_ONLY=intro`), niet de talen, medewerker, logo's en
+  inlogregels. Faalt de install of de rooktest, dan komen alleen de modulemap en de database van vlak daarvoor terug.
+  Daarna nog steeds een nieuwe snapshot, zodat de nachtelijke reset de module houdt.
+- SSH: is `*_KEY` geen leesbare sleutel en staat er een wachtwoord, dan wordt met het wachtwoord ingelogd.
+- Foutmeldingen en droge runs noemen geen hostnamen of gebruikers meer.
+- `demo-site.sh` gebruikt `mariadb`/`mariadb-dump` als die er zijn, en logt de databasenaam niet meer.
+
 ## [1.15.1] - 2026-10-20
 
 ### Opgelost
+- `publish`/`demo-site`: alle inloggegevens (ook die van `.db_credentials`) worden vóór de eerste uitvoerregel gelezen,
+  zodat het masker ze vanaf het begin kent; `localhost` en loopbackadressen worden niet meer gemaskeerd.
+- `demo-install.php` zegt bij een fout welk deel niet klopt (zip niet gevonden, modulenaam, geen winkelmap).
+- `publish demo`: de installatie vond de zip niet (relatief pad, terwijl het installatiescript in de winkelmap draait);
+  `demo-site.sh deploy` maakt het pad nu absoluut.
+- Demowinkel: het legen van `var/cache` faalde ("Directory not empty") als een bezoeker tegelijk de cache vulde, en
+  brak dan een herstel halverwege af. De map wordt nu eerst in één stap opzij gezet en daarna verwijderd; kan dat niet
+  (een koppelpunt, zoals het Docker-volume van de lokale demo: "Device or resource busy"), dan wordt hij ter plekke
+  geleegd.
+- `publish demo`: de foutmelding zei altijd dat de server de vorige snapshot had teruggezet, ook als dat niet zo was;
+  nu verwijst hij naar de serveruitvoer, waarin `demo-site.sh` dat zelf meldt.
 - Demowinkel: inloggen in de backoffice gaf een fout (Doctrine `NonUniqueResultException`): `demo-settings.php` maakte
   bij een tweede run een tweede medewerker met `demo@demo.com` (`Employee::employeeExists()` geeft in PS 9 een bool, geen
   id). Nu op id opgezocht; dubbele medewerkers worden verwijderd (ook na het terugzetten van een oude snapshot).
