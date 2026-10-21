@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.16.2] - 2026-10-21
+
+### Opgelost
+- Multistore-ronde, upgrade-test "keeps shop values" (MS-03): een configuratiesleutel die de nieuwe versie bewust
+  verwijdert (niet meer in `ModuleDefinition`, en na de upgrade in geen enkele winkel, groep of globaal meer aanwezig)
+  telt niet meer als verloren winkelwaarde. Blijven er toch rijen van zo'n sleutel achter, dan meldt de check dat
+  (INS-04). Gevonden bij `heavenproductlistorder` 1.1.0, dat `..._STOCK_FIRST` vervangt door `..._GROUP_ORDER`.
+
 ## [1.16.1] - 2026-10-21
 
 ### Gewijzigd

@@ -26,7 +26,8 @@
  *   php ps-multistore-shop.php reset <module>            removes the shop/group values again and restores the
  *                                                        global values saved by "isolation"
  *   php ps-multistore-shop.php keep-check <module>       after an upgrade: the values written by "isolation" are
- *                                                        unchanged (MS-03)
+ *                                                        unchanged (MS-03); a key the new version removed on
+ *                                                        purpose (not in its definition, no rows left) is skipped
  *   php ps-multistore-shop.php delete-shop <module>      creates a temporary shop, gives it values and deletes it;
  *                                                        lists rows of the module that still point to it (MS-08)
  *   php ps-multistore-shop.php find-value <module> <v>   configuration rows of the module with value <v> (a number
@@ -63,7 +64,7 @@ switch ($command) {
         msOut(msReset());
         break;
     case 'keep-check':
-        msOut(msKeepCheck());
+        msOut(msKeepCheck($module));
         break;
     case 'delete-shop':
         msOut(msDeleteShop($module));
@@ -288,16 +289,32 @@ function msReset(): array
 
 /**
  * After an upgrade: the shop, group and global values written by "isolation" are still there, unchanged.
+ * A key that the new version removed on purpose (no longer in its definition, and no row left in any scope: the
+ * upgrade script deleted it, e.g. with Configuration::deleteByName()) is skipped: MS-03 protects the values of keys
+ * that still exist. A removed key with rows left behind is a problem (the upgrade forgot to clean it up).
+ *
+ * @param string $module the module, for the keys of its current definition (empty: check every saved key)
  *
  * @return array<string, mixed>
  */
-function msKeepCheck(): array
+function msKeepCheck(string $module = ''): array
 {
     $state = msState();
     $problems = [];
     Configuration::clearConfigurationCacheForTesting();
-    msShopLog('keep-check: keys ' . implode(', ', array_keys($state['keys'] ?? [])));
+    $current = $module !== '' ? msConfigurationKeys($module) : null;
+    msShopLog('keep-check: keys ' . implode(', ', array_keys($state['keys'] ?? []))
+        . ($current === null ? '' : '; in the current definition: ' . implode(', ', array_keys($current))));
     foreach ($state['keys'] ?? [] as $key => $info) {
+        if ($current !== null && !array_key_exists($key, $current)) {
+            $rows = (int) Db::getInstance()->getValue('SELECT COUNT(*) FROM `' . _DB_PREFIX_ . 'configuration` WHERE name = \'' . pSQL($key) . '\'');
+            if ($rows > 0) {
+                $problems[] = "$key: no longer in the module definition, but $rows row(s) are left after the upgrade (remove the key in the upgrade script, INS-04).";
+            } else {
+                msShopLog("keep-check: $key was removed by the upgrade on purpose (not in the definition, no rows left): skipped");
+            }
+            continue;
+        }
         $s2 = Configuration::get($key, null, 1, (int) $state['ids']['shop2']);
         if (!msHasScope($key, 's' . $state['ids']['shop2']) || (string) $s2 !== $info['markers']['s2']) {
             $problems[] = "$key: the value of shop 2 changed or was removed by the upgrade (now " . json_encode($s2) . ', MS-03).';
