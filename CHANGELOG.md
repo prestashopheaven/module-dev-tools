@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.16.3] - 2026-10-21
+
+### Gewijzigd
+- Demowinkel, introductiepagina `/start/`: elke module krijgt een link naar zijn docs-site
+  (`<DOCS_SITE_URL>/<module>/index.php`). Zonder `DOCS_SITE_URL` is dat het eigen domein van de winkel, en dan alleen
+  voor modules waarvan `<module>/index.php` in de winkelroot staat (geen dode links).
+- `publish docs` schrijft daarna de introductiepagina van de demowinkel opnieuw (`demo-site.sh settings intro`, als
+  `DEMO_SITE_SSH_HOST` gezet is), zodat de link meteen verschijnt en niet pas na de nachtelijke reset. Lukt dat niet,
+  dan is het een waarschuwing.
+
 ## [1.16.2] - 2026-10-21
 
 ### Opgelost

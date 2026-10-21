@@ -28,7 +28,8 @@
  *   workspace's branding/): the shop logo (PS_LOGO, PNG), the logo of the back-office header (SVG, by a CSS rule in
  *   the admin theme) and of the login page (img/prestashop@2x.png);
  * - the intro page <intro-path>/index.html in the brand colours with the brand logo: links to the shop and to the back
- *   office, and the PrestaShopHeaven modules in the shop with their version and a link to their manuals.
+ *   office, and the PrestaShopHeaven modules in the shop with their version and a link to their docs site
+ *   (<docs-url>/<module>/index.php; without a docs URL the shop's own domain, when <module>/index.php is in the shop root).
  * With DEMO_SETTINGS_ONLY=intro (demo-site.sh deploy) only the intro page is written; the rest stays as it is.
  * Prints "DEMO-SETTINGS-OK <admin folder>".
  */
@@ -235,12 +236,21 @@ foreach (Db::getInstance()->executeS('SELECT name, version, active FROM ' . _DB_
     ];
 }
 $e = static fn (string $s): string => htmlspecialchars($s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+// The docs site of a module (ps-module publish docs) is <docs-url>/<module>/index.php. Without a docs URL it is on the
+// shop's own domain; a module gets a link when its docs folder is in the shop root, or always with a docs URL elsewhere.
+$docsBase = $docsUrl !== '' ? rtrim($docsUrl, '/') : $base;
 $items = '';
+$linked = [];
 foreach ($modules as $module) {
-    $docs = $docsUrl !== '' ? ' · <a href="' . $e(rtrim($docsUrl, '/') . '/' . $module['name'] . '/index.php') . '">Manual (PDF, all languages)</a>' : '';
+    $docs = '';
+    if (is_file(_PS_ROOT_DIR_ . '/' . $module['name'] . '/index.php') || $docsUrl !== '') {
+        $docs = '<br><a class="docs" href="' . $e($docsBase . '/' . $module['name'] . '/index.php') . '">Documentation and manuals (PDF, all languages)</a>';
+        $linked[] = $module['name'];
+    }
     $items .= '<li><strong>' . $e($module['display']) . '</strong> <span>v' . $e($module['version']) . '</span><br>'
         . $e($module['description']) . $docs . "</li>\n";
 }
+demo_vlog('intro docs links: ' . ($linked !== [] ? implode(', ', $linked) . " at $docsBase/<module>/index.php" : 'none (no <module>/index.php in the shop root and no docs URL)'));
 if ($items === '') {
     $items = "<li>No PrestaShopHeaven modules installed yet.</li>\n";
 }
@@ -282,6 +292,7 @@ $html = '<!doctype html>
   li { padding: 14px 16px; border-top: 1px solid var(--line); }
   li:first-child { border-top: 0; }
   li span { color: var(--muted); }
+  li a.docs { display: inline-block; margin-top: 8px; font-weight: 600; }
   a { color: var(--secondary); }
 </style>
 </head>

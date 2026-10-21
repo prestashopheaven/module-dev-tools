@@ -547,8 +547,36 @@ function publish_cmd_docs(array $ctx, bool $dryRun, bool $force): int
         $folder = rtrim(publish_env($ctx, 'DOCS_SITE_URL'), '/') . '/' . $ctx['module'] . '/';
         publish_cloudflare_purge($ctx, array_merge([$folder], array_map(static fn (string $f): string => $folder . rawurlencode($f), $files)));
     }
+    publish_demo_refresh_intro($ctx);
 
     return 0;
+}
+
+/**
+ * After publish docs: rewrite the intro page of the demo shop (when DEMO_SITE_SSH_HOST is set), so it links the new
+ * docs site right away instead of after the nightly reset. Only the intro page changes; a failure is a warning.
+ *
+ * @param array<string, mixed> $ctx
+ */
+function publish_demo_refresh_intro(array $ctx): void
+{
+    if (publish_env($ctx, 'DEMO_SITE_SSH_HOST') === '') {
+        ps_vlog('no DEMO_SITE_SSH_HOST: the intro page of the demo shop links the docs after its next reset');
+
+        return;
+    }
+    try {
+        echo "Demo shop: rewriting the intro page (link to the docs site)...\n";
+        $tools = publish_demo_tools_dir($ctx);
+        $ssh = publish_connect($ctx, 'DEMO_SITE_SSH');
+        publish_demo_upload_tools($ssh, $tools, false);
+        [, $exit] = publish_demo_run($ssh, $tools, 'settings intro');
+        if ($exit !== 0) {
+            throw new RuntimeException("demo-site.sh settings intro failed (exit $exit)");
+        }
+    } catch (RuntimeException $e) {
+        fwrite(STDERR, 'Warning: the intro page of the demo shop was not rewritten (' . publish_mask($e->getMessage()) . "); it links the docs after the next nightly reset, or run: ps-module demo-site settings intro\n");
+    }
 }
 
 /**

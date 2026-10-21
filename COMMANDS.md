@@ -258,7 +258,7 @@ publish a released version: the tag `v<version>` must exist, unless it runs in C
 |---|---|
 | `status [--check]` | The checklist of the current version: Addons upload, docs site, demo shop. `--check`: also ask the docs site which version it shows. Exit 0 when all are done. |
 | `site` | Builds `dist/docs-site/<module>/`: `index.php` + `readme_<iso>.pdf` of every language (from `docs build`). |
-| `docs [--dry-run] [--force] [--no-snapshot]` | Builds the site and uploads it by SFTP to `<DOCS_SITE_SFTP_PATH>/<module>/`, removes stale files there, then checks `<DOCS_SITE_URL>/<module>/index.php`. Afterwards a TransIP VPS snapshot, unless `--no-snapshot`. |
+| `docs [--dry-run] [--force] [--no-snapshot]` | Builds the site and uploads it by SFTP to `<DOCS_SITE_SFTP_PATH>/<module>/`, removes stale files there, then checks `<DOCS_SITE_URL>/<module>/index.php`. With `DEMO_SITE_SSH_HOST` set it then rewrites the intro page of the demo shop (`settings intro`), which links the docs site of every module. Afterwards a TransIP VPS snapshot, unless `--no-snapshot`. |
 | `demo [--dry-run] [--force] [--no-snapshot]` | Puts `dist/<module>.zip` in the demo shop (below). Needs the checked zip of the current code (`build` + `validate-zip`), except in CI. Afterwards a VPS snapshot, unless `--no-snapshot`. |
 | `vps-snapshot [<description>] [--dry-run]` | A TransIP snapshot of the whole VPS. `--dry-run` logs in read-only and lists the VPS and its snapshots. |
 | `done addons` | Records that the zip of this version is uploaded to PrestaShop Addons (by hand: Addons has no upload API). |
@@ -381,7 +381,7 @@ Commands that change the shop wait for each other (`flock`, up to an hour).
 | `KEEP_PATHS` | folders in `PS_ROOT` that are not part of the demo (`.well-known` and docs folders with `.docs-site` always) |
 | `DEMO_EMAIL`, `DEMO_PASSWORD` | the public demo login (`demo@demo.com` / `demodemo`) |
 | `INTRO_PATH` | intro page folder (`start`) |
-| `DOCS_URL` | docs site, linked from the intro page |
+| `DOCS_URL` | docs site, linked from the intro page as `<DOCS_URL>/<module>/index.php`. Empty: the shop's own domain, for each module whose `<module>/index.php` is in the shop root |
 
 ### `php demo-install.php <zip> <module> [<php>]`
 Run in the root of the shop. Installs or upgrades a module from a zip:

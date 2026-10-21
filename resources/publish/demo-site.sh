@@ -60,7 +60,8 @@
 #   ADMIN_DIR=admin123               back-office folder (optional; found automatically)
 #   DEMO_EMAIL=demo@demo.com  DEMO_PASSWORD=demodemo   the public demo login (filled in on the login page)
 #   INTRO_PATH=start                 the intro page: URL/start/
-#   DOCS_URL=https://modules.example.com   docs site: the intro page links the manuals of every module
+#   DOCS_URL=https://modules.example.com   docs site: the intro page links <DOCS_URL>/<module>/index.php of every
+#                                    module (empty: the shop's own domain, for modules with <module>/index.php in the root)
 #   SNAPSHOT_DIR=/home/demo/demo-site/snapshots   (default: snapshots/ next to this script)
 #   KEEP=5  PHP=php  CRON_TIME="30 3 * * *"
 # Needs: bash, php, mysql + mysqldump, tar, gzip, curl; rsync when available (else the root folder is swapped).
