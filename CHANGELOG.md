@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.16.1] - 2026-10-21
+
+### Gewijzigd
+- VPS-snapshots (TransIP): de oudste snapshot blijft altijd (het beginpunt); vóór een nieuwe gaat de meest recente
+  weg. `TRANSIP_SNAPSHOT_KEEP` is standaard 2 (minimaal 2): de oudste + de nieuwste. Na het verwijderen wacht het tot
+  de VPS vrij is.
+
+### Opgelost
+- `TRANSIP_PRIVATE_KEY` (en andere sleutels) in `.env` over meerdere regels, tussen aanhalingstekens, met `\n` of met
+  verloren regeleinden (gekopieerd van een webpagina) wordt nu gelezen; lukt het niet, dan zegt de melding waarom
+  (zonder de sleutel te tonen).
+- Een verkeerde `TRANSIP_VPS_NAME` (de omschrijving in plaats van de technische naam) noemt de VPS'en van het account.
+
 ## [1.16.0] - 2026-10-21
 
 ### Toegevoegd

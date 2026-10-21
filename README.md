@@ -195,8 +195,8 @@ demo@demo.com / demodemo) en de introductiepagina `/<DEMO_SITE_INTRO_PATH>/` (st
 winkel en de backoffice (inlog ingevuld) en de modules. `demo-site push <map>` maakt een elders gemaakte snapshot
 (de lokale Docker-kopie) die van de server; de server houdt zijn eigen `parameters.php`, domein en `.htaccess` volgen
 `DEMO_SITE_URL`. **TransIP:** `publish vps-snapshot` (en automatisch na een deploy) maakt een snapshot van de hele VPS
-via de API (`TRANSIP_LOGIN`, `TRANSIP_PRIVATE_KEY`, `TRANSIP_VPS_NAME`, `TRANSIP_SNAPSHOT_KEEP`); bij "Snapshot limit
-reached" gaat eerst de oudste weg. De sleutel hoort nooit op de VPS.
+via de API (`TRANSIP_LOGIN`, `TRANSIP_PRIVATE_KEY`, `TRANSIP_VPS_NAME`, `TRANSIP_SNAPSHOT_KEEP`); de oudste snapshot blijft altijd
+(het beginpunt), vóór een nieuwe gaat de meest recente weg (`TRANSIP_SNAPSHOT_KEEP`, standaard 2). De sleutel hoort nooit op de VPS.
 
 ## Gedeelde configuratie
 

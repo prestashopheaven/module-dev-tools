@@ -68,7 +68,7 @@
  *   DEMO_SITE_CONNECT_TO (curl --connect-to for the smoke test; empty: found itself), DEMO_SITE_KEEP_PATHS (folders
  *   in the shop root that are not part of the demo; .well-known and docs folders are always kept), DEMO_SITE_DEMO_MODE (on), DEMO_SITE_EMAIL
  *   (demo@demo.com) + DEMO_SITE_PASSWORD (demodemo): the public demo login, DEMO_SITE_INTRO_PATH (start): intro page
- *   TRANSIP_LOGIN, TRANSIP_PRIVATE_KEY (file, or the key itself), TRANSIP_VPS_NAME, TRANSIP_SNAPSHOT_KEEP (1),
+ *   TRANSIP_LOGIN, TRANSIP_PRIVATE_KEY (file, or the key itself), TRANSIP_VPS_NAME (technical name, e.g. login-vps2), TRANSIP_SNAPSHOT_KEEP (2: the oldest is always kept),
  *   TRANSIP_GLOBAL_KEY (true; false = the key only works from whitelisted IPs)
  *   CLOUDFLARE_API_TOKEN (permission Zone > Cache Purge) + CLOUDFLARE_ZONE_ID: after `publish docs` / `publish demo`
  *   the changed files (PDFs, logo, views/) are purged from the Cloudflare cache; without them the addresses are listed
@@ -1009,9 +1009,11 @@ function publish_cloudflare_purge(array $ctx, array $urls): void
 }
 
 /**
- * TransIP snapshot of the VPS (TRANSIP_VPS_NAME) through the REST API v6: skipped when the VPS is busy (isLocked);
- * creates the snapshot (the VPS keeps running), and when the limit is reached removes the oldest active snapshot and
- * tries once more; then keeps the newest TRANSIP_SNAPSHOT_KEEP. Returns true when the snapshot was requested.
+ * TransIP snapshot of the VPS (TRANSIP_VPS_NAME) through the REST API v6. The oldest snapshot is always kept: it is the
+ * starting point to go back to. Before the new snapshot the most recent ones are removed until there is room within
+ * TRANSIP_SNAPSHOT_KEEP (default 2, at least 2: the oldest + the newest), and again once when TransIP says its limit is
+ * reached. Skipped when the VPS is busy (isLocked); after a removal it waits until the VPS is free again. The VPS keeps
+ * running. Returns true when the snapshot was requested.
  *
  * @param array<string, mixed> $ctx
  *
@@ -1020,49 +1022,118 @@ function publish_cloudflare_purge(array $ctx, array $urls): void
 function publish_cmd_vps_snapshot(array $ctx, string $description, bool $dryRun): bool
 {
     $vps = publish_require_env($ctx, 'TRANSIP_VPS_NAME');
-    $keep = max(1, (int) (publish_env($ctx, 'TRANSIP_SNAPSHOT_KEEP') ?: 1));
+    $keep = max(2, (int) (publish_env($ctx, 'TRANSIP_SNAPSHOT_KEEP') ?: 2));
     if ($dryRun) {
         // A real test of the API access with a read-only token: the VPS and its snapshots; nothing changes.
         $token = publish_transip_token($ctx, true);
-        $info = publish_transip($token, 'GET', "/vps/$vps")['body']['vps'] ?? [];
+        $info = publish_transip_vps($token, $vps);
         echo "TransIP API: logged in (read-only). VPS $vps: " . (string) ($info['status'] ?? '?') . (!empty($info['isLocked']) ? ', busy' : '') . "\n";
-        foreach (publish_transip_snapshots($token, $vps) as $snapshot) {
-            echo "  snapshot {$snapshot['name']} ({$snapshot['dateTimeCreate']})\n";
+        $active = publish_transip_snapshots($token, $vps);
+        foreach ($active as $i => $snapshot) {
+            echo "  snapshot {$snapshot['name']} ({$snapshot['dateTimeCreate']})" . ($i === 0 ? ' - the oldest: always kept' : '') . "\n";
         }
-        echo "Dry run: would create a TransIP snapshot of $vps (\"$description\") and keep the newest $keep.\n";
+        $remove = array_slice($active, 1, max(0, count($active) - ($keep - 1)));
+        echo "Dry run: would " . ($remove !== [] ? 'remove ' . implode(', ', array_map(static fn (array $s): string => $s['name'], array_reverse($remove))) . ' (the most recent), then ' : '')
+            . "create a TransIP snapshot of $vps (\"$description\"); kept: the oldest + the newest, $keep in all.\n";
 
         return true;
     }
     $token = publish_transip_token($ctx);
-    $info = publish_transip($token, 'GET', "/vps/$vps");
-    if (!empty($info['body']['vps']['isLocked'])) {
-        fwrite(STDERR, "ps-module publish: VPS $vps is busy (another action, e.g. a snapshot, is running): no new snapshot. Try later: vendor/bin/ps-module publish vps-snapshot\n");
+    if (!empty(publish_transip_vps($token, $vps)['isLocked'])) {
+        fwrite(STDERR, "ps-module publish: VPS $vps is busy (another action, e.g. a snapshot, is running): no new snapshot. Try later: vendor/bin/ps-module demo-site vps-snapshot\n");
 
         return false;
+    }
+    $active = publish_transip_snapshots($token, $vps);
+    $removed = false;
+    while (count($active) > 1 && count($active) >= $keep) {
+        $removed = publish_transip_remove_newest($token, $vps, $active) || $removed;
+    }
+    if ($removed) {
+        publish_transip_wait($token, $vps);
     }
     $body = ['description' => substr($description, 0, 100), 'shouldStartVps' => true];
     $created = publish_transip($token, 'POST', "/vps/$vps/snapshots", $body, false);
     if ($created['status'] !== 201 && str_contains(strtolower((string) ($created['body']['error'] ?? '')), 'limit')) {
-        $oldest = publish_transip_snapshots($token, $vps)[0] ?? null;
-        if ($oldest === null) {
-            throw new RuntimeException('snapshot limit reached and no active snapshot to remove.');
+        if (count($active) <= 1) {
+            throw new RuntimeException('TransIP\'s snapshot limit is reached and only the oldest snapshot is left; it is kept as the starting point. Raise the limit of the plan, or remove it by hand.');
         }
-        echo "  snapshot limit reached: removing the oldest ({$oldest['name']}, {$oldest['dateTimeCreate']})\n";
-        publish_transip($token, 'DELETE', "/vps/$vps/snapshots/{$oldest['name']}");
+        echo "  snapshot limit of TransIP reached\n";
+        publish_transip_remove_newest($token, $vps, $active);
+        publish_transip_wait($token, $vps);
         $created = publish_transip($token, 'POST', "/vps/$vps/snapshots", $body, false);
     }
     if ($created['status'] !== 201) {
         throw new RuntimeException('TransIP refused the snapshot (HTTP ' . $created['status'] . '): ' . (string) ($created['body']['error'] ?? ''));
     }
     echo "TransIP snapshot of $vps requested: \"{$body['description']}\" (TransIP makes it in the background).\n";
-    // Keep the newest $keep: the new one is still "creating" and not in the list of active snapshots.
-    $active = publish_transip_snapshots($token, $vps);
-    foreach (array_slice($active, 0, max(0, count($active) - ($keep - 1))) as $old) {
-        publish_transip($token, 'DELETE', "/vps/$vps/snapshots/{$old['name']}");
-        echo "  removed old snapshot {$old['name']} ({$old['dateTimeCreate']})\n";
+    if ($active !== []) {
+        echo "  kept: the oldest {$active[0]['name']} ({$active[0]['dateTimeCreate']})" . (count($active) > 1 ? ' and ' . (count($active) - 1) . ' more' : '') . "\n";
     }
 
     return true;
+}
+
+/**
+ * The VPS as TransIP describes it (status, isLocked). A wrong TRANSIP_VPS_NAME (the description of the control panel
+ * instead of the technical name) gets the names of the account's VPSs in the error.
+ *
+ * @return array<string, mixed>
+ *
+ * @throws RuntimeException when the VPS does not exist or the API refuses
+ */
+function publish_transip_vps(string $token, string $vps): array
+{
+    $info = publish_transip($token, 'GET', "/vps/$vps", null, false);
+    if ($info['status'] === 404) {
+        $names = [];
+        foreach ((array) (publish_transip($token, 'GET', '/vps')['body']['vpss'] ?? []) as $item) {
+            if (is_array($item)) {
+                $names[] = (string) ($item['name'] ?? '?') . (($item['description'] ?? '') !== '' ? ' ("' . $item['description'] . '")' : '');
+            }
+        }
+        throw new RuntimeException("TRANSIP_VPS_NAME: TransIP has no VPS named $vps. Use the technical name; the VPSs of this account: " . ($names !== [] ? implode(', ', $names) : 'none') . '.');
+    }
+    if ($info['status'] >= 400) {
+        throw new RuntimeException("TransIP API GET /vps/$vps: HTTP {$info['status']} " . (string) ($info['body']['error'] ?? ''));
+    }
+
+    return (array) ($info['body']['vps'] ?? []);
+}
+
+/**
+ * Removes the most recent snapshot of the list (never the oldest, the first one) and drops it from the list.
+ *
+ * @param list<array{name: string, dateTimeCreate: string}> $active oldest first
+ */
+function publish_transip_remove_newest(string $token, string $vps, array &$active): bool
+{
+    if (count($active) <= 1) {
+        return false;
+    }
+    $newest = array_pop($active);
+    publish_transip($token, 'DELETE', "/vps/$vps/snapshots/{$newest['name']}");
+    echo "  removed the most recent snapshot {$newest['name']} ({$newest['dateTimeCreate']}); the oldest stays\n";
+
+    return true;
+}
+
+/**
+ * Waits until TransIP has finished with the VPS (isLocked false), at most 5 minutes; a removed snapshot keeps it busy
+ * for a while and a new snapshot is refused meanwhile.
+ *
+ * @throws RuntimeException when the VPS is still busy after 5 minutes
+ */
+function publish_transip_wait(string $token, string $vps): void
+{
+    $start = time();
+    while (!empty(publish_transip_vps($token, $vps)['isLocked'])) {
+        if (time() - $start > 300) {
+            throw new RuntimeException("VPS $vps is still busy after 5 minutes: try later (vendor/bin/ps-module demo-site vps-snapshot).");
+        }
+        ps_vlog('VPS busy (removing a snapshot): waiting 10 s');
+        sleep(10);
+    }
 }
 
 /**
@@ -1094,10 +1165,10 @@ function publish_transip_snapshots(string $token, string $vps): array
 function publish_transip_token(array $ctx, bool $readOnly = false): string
 {
     $keySetting = publish_require_env($ctx, 'TRANSIP_PRIVATE_KEY');
-    $pem = is_file($keySetting) ? (string) file_get_contents($keySetting) : str_replace('\n', "\n", $keySetting);
+    $pem = publish_normalize_pem(is_file($keySetting) ? (string) file_get_contents($keySetting) : $keySetting);
     $key = openssl_pkey_get_private($pem);
     if ($key === false) {
-        throw new RuntimeException('TRANSIP_PRIVATE_KEY is not a readable private key.');
+        throw new RuntimeException('TRANSIP_PRIVATE_KEY is not a readable private key: ' . (is_file($keySetting) ? 'the file exists, but ' . publish_key_problem((string) file_get_contents($keySetting)) : publish_key_problem($pem)) . '.');
     }
     $body = (string) json_encode([
         'login' => publish_require_env($ctx, 'TRANSIP_LOGIN'),
@@ -1238,8 +1309,8 @@ function publish_env_lookup(array $ctx, string $key): string
         return $value;
     }
     for ($dir = $ctx['repo']; $dir !== dirname($dir); $dir = dirname($dir)) {
-        if (is_file("$dir/.env") && preg_match('/^\s*' . preg_quote($key, '/') . '\s*=\s*(.*?)\s*$/m', (string) file_get_contents("$dir/.env"), $m)) {
-            $found = trim($m[1], "\"'");
+        if (is_file("$dir/.env") && preg_match('/^\s*' . preg_quote($key, '/') . '\s*=\s*(.*?)\s*$/m', $text = (string) file_get_contents("$dir/.env"), $m, PREG_OFFSET_CAPTURE)) {
+            $found = publish_env_multiline($text, (string) $m[1][0], (int) $m[0][1] + strlen((string) $m[0][0]));
             if ($found !== '') {
                 publish_env_source("$dir/.env");
 
@@ -1250,6 +1321,84 @@ function publish_env_lookup(array $ctx, string $key): string
     publish_env_source('nowhere');
 
     return '';
+}
+
+/**
+ * The value of a .env line, also when it goes on over the next lines: a quoted value without its closing quote on the
+ * first line ("-----BEGIN ...\n...\n-----END ...-----"), or a pasted PEM key whose first line is "-----BEGIN ...-----"
+ * (up to the "-----END ...-----" line). Otherwise the line itself, without surrounding quotes.
+ */
+function publish_env_multiline(string $text, string $first, int $offset): string
+{
+    $quote = $first !== '' && ($first[0] === '"' || $first[0] === "'") ? $first[0] : '';
+    $openQuote = $quote !== '' && (strlen($first) === 1 || substr($first, -1) !== $quote);
+    $pemStart = preg_match('/^["\']?-----BEGIN [A-Z0-9 ]+-----$/', $first) === 1;
+    if (!$openQuote && !$pemStart) {
+        return trim($first, "\"'");
+    }
+    $lines = [ltrim($first, "\"'")];
+    foreach (preg_split('/\R/', substr($text, $offset)) ?: [] as $i => $line) {
+        $line = rtrim($line);
+        if ($line === '') {
+            continue; // line breaks of the first line, \r\n counted twice; a key has no empty lines
+        }
+        if ($openQuote && str_ends_with($line, $quote)) {
+            $lines[] = substr($line, 0, -1);
+            break;
+        }
+        $lines[] = $line;
+        if (!$openQuote && preg_match('/^-----END [A-Z0-9 ]+-----$/', trim($line)) === 1) {
+            break;
+        }
+    }
+
+    return trim(implode("\n", $lines));
+}
+
+/**
+ * A PEM key in its standard layout, however it was pasted: "\n" written as text, line breaks lost or turned into
+ * spaces (copied from a web page), \r\n line ends. The base64 body is taken without any white space and wrapped at 64
+ * characters between its BEGIN and END lines. Text without such a block is returned as it is.
+ */
+function publish_normalize_pem(string $text): string
+{
+    $text = str_replace(['\r\n', '\n'], "\n", $text);
+    if (preg_match('/-----BEGIN ([A-Z0-9 ]+)-----(.*?)-----END \1-----/s', $text, $m) !== 1) {
+        return $text;
+    }
+    // A traditional encrypted key has header lines (Proc-Type, DEK-Info) that must stay: leave it as it is.
+    if (str_contains($m[2], 'Proc-Type:')) {
+        return $text;
+    }
+    $body = (string) preg_replace('/[^A-Za-z0-9+\/=]/', '', $m[2]);
+
+    return "-----BEGIN {$m[1]}-----\n" . chunk_split($body, 64, "\n") . "-----END {$m[1]}-----\n";
+}
+
+/**
+ * Why a private key setting cannot be used (never shows the value): a file path that does not exist, a key cut off
+ * after its first line, or text that OpenSSL cannot read.
+ */
+function publish_key_problem(string $setting): string
+{
+    $setting = trim($setting);
+    if (!str_contains($setting, '-----')) {
+        return preg_match('#[/\\\\]|\.(pem|key)$#i', $setting) === 1
+            ? 'it looks like a file path, but there is no file there (' . (is_dir(dirname($setting)) ? 'the folder exists, the file does not' : 'the folder does not exist either') . ')'
+            : 'it is neither a file path nor a key (a key starts with -----BEGIN PRIVATE KEY-----)';
+    }
+    if (!str_contains($setting, '-----END')) {
+        return 'only the start of the key arrived (no -----END line): put the key in a file and set its path, or put it on one line with \n between the lines';
+    }
+    if (str_contains($setting, 'PUBLIC KEY')) {
+        return 'this is a public key; the private key is needed (-----BEGIN PRIVATE KEY-----)';
+    }
+    $error = '';
+    while (($e = openssl_error_string()) !== false) {
+        $error = $e;
+    }
+
+    return 'OpenSSL cannot read the key text' . ($error !== '' ? " ($error)" : '') . ': is it complete, and protected by a passphrase? (not supported)';
 }
 
 /**
