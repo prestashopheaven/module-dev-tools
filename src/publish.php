@@ -46,8 +46,14 @@
  *                                       TransIP snapshot of the whole demo/docs VPS (TRANSIP_*): disaster backup.
  *                                       `publish docs` and `publish demo` make one after a successful deploy (unless
  *                                       --no-snapshot). The API key is never on the VPS itself.
- *   ps-module publish done addons       record that dist/<module>.zip of this version is uploaded to PrestaShop Addons
- *                                       (by hand in the seller account: Addons has no upload API)
+ *   ps-module publish shop [--dry-run]  the module as a product in the own sales shop (webservice, SALES_SHOP_*), only
+ *                                       on command: created once and always INACTIVE, with name, descriptions and
+ *                                       features (Multistore: Yes) in every shop language, the cover and the framed
+ *                                       English screenshots; an existing product (same reference) is never changed.
+ *                                       The zip goes in by hand: PrestaShop has no API for virtual product files.
+ *                                       Details: src/publish-shop.php
+ *   ps-module publish done addons|shop  record a manual step: dist/<module>.zip of this version is uploaded to
+ *                                       PrestaShop Addons (no upload API) / put in the sales shop product by hand
  *   ps-module publish undo <step>       forget a recorded step of the current version
  *
  * docs and demo only publish a released version: tag v<version> exists (the release workflow makes it), or the
@@ -72,6 +78,8 @@
  *   TRANSIP_GLOBAL_KEY (true; false = the key only works from whitelisted IPs)
  *   CLOUDFLARE_API_TOKEN (permission Zone > Cache Purge) + CLOUDFLARE_ZONE_ID: after `publish docs` / `publish demo`
  *   the changed files (PDFs, logo, views/) are purged from the Cloudflare cache; without them the addresses are listed
+ *   SALES_SHOP_URL + SALES_SHOP_WEBSERVICE_KEY, optional SALES_SHOP_CATEGORY_ID (2) and SALES_SHOP_TAX_RULES_GROUP_ID:
+ *   the own sales shop of `publish shop`
  * In CI the key can be given as text: DOCS_SITE_SFTP_KEY / DEMO_SITE_SSH_KEY may hold the key itself.
  * The recorded steps are in <repo>/.cache/publish/<version>.json (local, not in git).
  */
@@ -80,8 +88,9 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/dod.php';
 require_once __DIR__ . '/verbose.php';
+require_once __DIR__ . '/publish-shop.php';
 
-const PUBLISH_STEPS = ['addons', 'docs', 'demo'];
+const PUBLISH_STEPS = ['addons', 'docs', 'demo', 'shop'];
 
 if (PHP_SAPI === 'cli' && realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === realpath(__FILE__)) {
     exit(publish_main(array_slice($argv, 1)));
@@ -147,6 +156,8 @@ function publish_main(array $argv): int
                 $code = publish_cmd_demo($ctx, $dryRun, in_array('--force', $flags, true));
 
                 return $code === 0 && !$dryRun && !in_array('--no-snapshot', $flags, true) ? publish_after_deploy($ctx, 'demo') : $code;
+            case 'shop':
+                return publish_cmd_shop($ctx, $dryRun);
             case 'demo-site':
                 return publish_cmd_demo_site($ctx, $args, $dryRun);
             case 'vps-snapshot':
@@ -220,7 +231,7 @@ function publish_register_secrets(array $ctx): void
             publish_env_lookup_quiet($ctx, $prefix . $suffix);
         }
     }
-    foreach (['TRANSIP_LOGIN', 'TRANSIP_PRIVATE_KEY', 'CLOUDFLARE_API_TOKEN'] as $key) {
+    foreach (['TRANSIP_LOGIN', 'TRANSIP_PRIVATE_KEY', 'CLOUDFLARE_API_TOKEN', 'SALES_SHOP_WEBSERVICE_KEY'] as $key) {
         publish_env_lookup_quiet($ctx, $key);
     }
     try {
@@ -312,8 +323,10 @@ function publish_cmd_status(array $ctx, bool $check): int
         'addons' => 'upload ../dist/' . $ctx['module'] . '.zip in the Addons seller account, then: vendor/bin/ps-module publish done addons',
         'docs' => 'vendor/bin/ps-module publish docs' . (publish_env($ctx, 'DOCS_SITE_SFTP_HOST') === '' ? '   (needs DOCS_SITE_SFTP_* in .env)' : ''),
         'demo' => 'vendor/bin/ps-module publish demo' . (publish_env($ctx, 'DEMO_SITE_SSH_HOST') === '' ? '   (needs DEMO_SITE_SSH_* in .env)' : ''),
+        'shop' => 'vendor/bin/ps-module publish shop (creates the product once, inactive; a later version: put the zip in it by hand, then publish done shop)'
+            . (publish_env($ctx, 'SALES_SHOP_URL') === '' ? '   (needs SALES_SHOP_* in .env)' : ''),
     ];
-    $labels = ['addons' => 'Addons upload', 'docs' => 'Docs site (PDFs)', 'demo' => 'Demo shop'];
+    $labels = ['addons' => 'Addons upload', 'docs' => 'Docs site (PDFs)', 'demo' => 'Demo shop', 'shop' => 'Sales shop'];
     echo "Publish checklist for {$ctx['module']} {$ctx['version']}:\n";
     $open = 0;
     foreach (PUBLISH_STEPS as $step) {
@@ -339,13 +352,15 @@ function publish_cmd_status(array $ctx, bool $check): int
  */
 function publish_cmd_done(array $ctx, string $step): int
 {
-    if ($step !== 'addons') {
-        fwrite(STDERR, "ps-module publish done: only 'addons' is a manual step (docs and demo record themselves).\n");
+    if ($step !== 'addons' && $step !== 'shop') {
+        fwrite(STDERR, "ps-module publish done: only 'addons' and 'shop' are manual steps (docs and demo record themselves).\n");
 
         return 2;
     }
-    publish_record($ctx, 'addons', 'uploaded by hand');
-    echo "Recorded: {$ctx['module']} {$ctx['version']} is uploaded to PrestaShop Addons.\n";
+    publish_record($ctx, $step, $step === 'addons' ? 'uploaded by hand' : 'zip put in the product by hand');
+    echo $step === 'addons'
+        ? "Recorded: {$ctx['module']} {$ctx['version']} is uploaded to PrestaShop Addons.\n"
+        : "Recorded: the sales shop product of {$ctx['module']} has the zip of {$ctx['version']}.\n";
 
     return 0;
 }
@@ -1323,7 +1338,7 @@ function publish_env(array $ctx, string $key): string
 function publish_env_lookup(array $ctx, string $key): string
 {
     $file = publish_env_file();
-    if ($file !== [] && (array_key_exists($key, $file) || preg_match('/^(DEMO_SITE|DOCS_SITE|TRANSIP|CLOUDFLARE)_/', $key) === 1)) {
+    if ($file !== [] && (array_key_exists($key, $file) || preg_match('/^(DEMO_SITE|DOCS_SITE|TRANSIP|CLOUDFLARE|SALES_SHOP)_/', $key) === 1)) {
         // With --env the server settings come only from that file: a local test must never reach the real servers,
         // the TransIP account or the Cloudflare zone through a value in .env.
         publish_env_source('the --env file');

@@ -256,13 +256,14 @@ publish a released version: the tag `v<version>` must exist, unless it runs in C
 
 | Command | What it does |
 |---|---|
-| `status [--check]` | The checklist of the current version: Addons upload, docs site, demo shop. `--check`: also ask the docs site which version it shows. Exit 0 when all are done. |
+| `status [--check]` | The checklist of the current version: Addons upload, docs site, demo shop, sales shop. `--check`: also ask the docs site which version it shows. Exit 0 when all are done. |
 | `site` | Builds `dist/docs-site/<module>/`: `index.php` + `readme_<iso>.pdf` of every language (from `docs build`). |
 | `docs [--dry-run] [--force] [--no-snapshot]` | Builds the site and uploads it by SFTP to `<DOCS_SITE_SFTP_PATH>/<module>/`, removes stale files there, then checks `<DOCS_SITE_URL>/<module>/index.php`. With `DEMO_SITE_SSH_HOST` set it then rewrites the intro page of the demo shop (`settings intro`), which links the docs site of every module. Afterwards a TransIP VPS snapshot, unless `--no-snapshot`. |
 | `demo [--dry-run] [--force] [--no-snapshot]` | Puts `dist/<module>.zip` in the demo shop (below). Needs the checked zip of the current code (`build` + `validate-zip`), except in CI. Afterwards a VPS snapshot, unless `--no-snapshot`. |
 | `vps-snapshot [<description>] [--dry-run]` | A TransIP snapshot of the whole VPS. `--dry-run` logs in read-only and lists the VPS and its snapshots. |
-| `done addons` | Records that the zip of this version is uploaded to PrestaShop Addons (by hand: Addons has no upload API). |
-| `undo <step>` | Forgets a recorded step (`addons`, `docs`, `demo`) of the current version. |
+| `shop [--dry-run]` | Creates the module as a product in your own sales shop through the PrestaShop webservice (below). Only on command, never in CI. |
+| `done addons\|shop` | Records a manual step: the zip of this version is uploaded to PrestaShop Addons (Addons has no upload API), or put in the sales shop product by hand. |
+| `undo <step>` | Forgets a recorded step (`addons`, `docs`, `demo`, `shop`) of the current version. |
 | `help` | This list. |
 
 **`demo` steps on the server:**
@@ -279,9 +280,33 @@ Afterwards (on the local side) the module's static files (`logo.png`, `views/**`
 when `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ZONE_ID` are set; otherwise their addresses are printed. They keep their
 address in every version, and the server lets a CDN cache them for years. `publish docs` does the same for the PDFs.
 
+**`shop`: the product in the sales shop.**
+- **Once per module.** A product whose reference is the module's technical name is never changed: the command says
+  it exists and stops. For a new version you put the zip in the product by hand, then `publish done shop`.
+- **Always inactive.** The product is created with `active=0` and read back; you activate it yourself. A shop whose
+  webservice does not know `active` gets no product at all.
+- **What goes in:**
+  - name and short description: `display_name` and `description` of `module.spec.json`, translated from
+    `i18n/<iso>.json`;
+  - description: `docs/content/<iso>/marketing.json` (`description` as paragraphs, then `features` as a list);
+  - meta title, meta description and friendly URL (Latin scripts transliterated, other scripts get the English URL);
+  - price without tax: `docs.json > marketing > price`;
+  - virtual product, category `SALES_SHOP_CATEGORY_ID` (2), tax rule `SALES_SHOP_TAX_RULES_GROUP_ID` (none);
+  - images: `docs/marketing/cover-1000.png` (the cover), then `docs/framed/en/<id>.png` in the order of
+    `docs.json > screenshots`;
+  - features from `resources/publish/shop-features.json` (Multistore: Yes); an existing feature or value with the same
+    name in any language is reused.
+- **Languages:** every language installed in the shop. It gets the module's texts in that language (matched on
+  PrestaShop's iso code, `si`/`vn` too, else on the language code: `pt-br` gets `pt`), otherwise English.
+- **By hand afterwards:** the zip in the Virtual product tab (PrestaShop has no API for virtual product files), the tax
+  rule, stock, and activating the product.
+- **Webservice key** (Advanced Parameters > Webservice), permissions: `languages` GET; `products` GET + POST;
+  `images` POST; `product_features` and `product_feature_values` GET + POST.
+
 Options for all `publish` and `demo-site` commands:
 - `--env=<file>`: read the settings from this file first (e.g. `demo-site/local.env`). Server settings
-  (`DEMO_SITE_*`, `DOCS_SITE_*`, `TRANSIP_*`) then come only from that file, never from `.env`.
+  (`DEMO_SITE_*`, `DOCS_SITE_*`, `TRANSIP_*`, `CLOUDFLARE_*`, `SALES_SHOP_*`) then come only from that file, never
+  from `.env`.
 - `--dry-run`: show what would happen; nothing changes.
 - `--force`: publish a version without a release tag.
 
@@ -448,6 +473,7 @@ Credentials are always masked in output.
 | `DEMO_SITE_DB_CREDENTIALS` | `demo-site install-prestashop` | another database file instead of the nearest `.db_credentials` |
 | `TRANSIP_LOGIN`, `TRANSIP_PRIVATE_KEY` (file or key text), `TRANSIP_VPS_NAME`, `TRANSIP_SNAPSHOT_KEEP` (2, at least 2: the oldest snapshot is always kept as the starting point; before a new one the most recent goes), `TRANSIP_GLOBAL_KEY` (true) | `vps-snapshot`, after `publish docs/demo` | TransIP VPS snapshots (never on the VPS itself) |
 | `CLOUDFLARE_API_TOKEN` (permission Zone > Cache Purge), `CLOUDFLARE_ZONE_ID` | after `publish docs/demo` | Purges the module's static files (logo, `views/`) and the docs PDFs from the Cloudflare cache. Without them the addresses are printed for a purge by hand. |
+| `SALES_SHOP_URL`, `SALES_SHOP_WEBSERVICE_KEY`, `SALES_SHOP_CATEGORY_ID` (2), `SALES_SHOP_TAX_RULES_GROUP_ID` (none) | `publish shop` | Your own sales shop: its address (as the shop answers it, https and www included) and a webservice key with the permissions listed under `shop` above. |
 
 `.db_credentials` (next to `.env`): `DB_HOST` (localhost), `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, optional
 `DB_PREFIX` (must be `ps_`). `key: value`, `export KEY=value` and PHP `define()` lines work too. It is only used by

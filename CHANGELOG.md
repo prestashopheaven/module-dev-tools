@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.17.0] - 2026-10-22
+
+### Toegevoegd
+- `ps-module publish shop [--dry-run]`: de module als product in de eigen verkoopwinkel, via de PrestaShop-webservice
+  (`SALES_SHOP_URL` + `SALES_SHOP_WEBSERVICE_KEY`, optioneel `SALES_SHOP_CATEGORY_ID` en
+  `SALES_SHOP_TAX_RULES_GROUP_ID`). Alleen op commando. Het product komt er één keer, altijd **inactief** (teruggelezen
+  ter controle), als virtueel product met naam, korte en lange omschrijving, meta-teksten en vriendelijke URL in elke
+  taal van de winkel (teksten uit `module.spec.json`, `i18n/<iso>.json` en `docs/content/<iso>/marketing.json`; een
+  taal zonder teksten krijgt Engels), de prijs uit `docs.json > marketing`, de cover en de Engelse framed screenshots
+  als afbeeldingen en de feature Multistore: Ja (`resources/publish/shop-features.json`, bestaande wordt hergebruikt).
+  Een bestaand product (zelfde referentie) wordt nooit aangepast. De zip blijft handwerk: PrestaShop heeft geen API
+  voor bestanden van virtuele producten. Getest op PrestaShop 8.1.0 en 9.2.0.
+- Publicatie-checklist: stap `shop` (Verkoopwinkel); `publish done shop` legt vast dat de zip van een nieuwe versie met
+  de hand in het product staat.
+
 ## [1.16.3] - 2026-10-21
 
 ### Gewijzigd
