@@ -46,10 +46,12 @@
  *                                       TransIP snapshot of the whole demo/docs VPS (TRANSIP_*): disaster backup.
  *                                       `publish docs` and `publish demo` make one after a successful deploy (unless
  *                                       --no-snapshot). The API key is never on the VPS itself.
- *   ps-module publish shop [--dry-run]  the module as a product in the own sales shop (webservice, SALES_SHOP_*), only
+ *   ps-module publish shop [--dry-run] [--force]
+ *                                       the module as a product in the own sales shop (webservice, SALES_SHOP_*), only
  *                                       on command: created once and always INACTIVE, with name, descriptions and
  *                                       features (Multistore: Yes) in every shop language, the cover and the framed
- *                                       English screenshots; an existing product (same reference) is never changed.
+ *                                       English screenshots; an existing product (same reference) is never changed, a
+ *                                       product with the same name stops it (--force: create anyway).
  *                                       The zip goes in by hand: PrestaShop has no API for virtual product files.
  *                                       Details: src/publish-shop.php
  *   ps-module publish done addons|shop  record a manual step: dist/<module>.zip of this version is uploaded to
@@ -157,7 +159,7 @@ function publish_main(array $argv): int
 
                 return $code === 0 && !$dryRun && !in_array('--no-snapshot', $flags, true) ? publish_after_deploy($ctx, 'demo') : $code;
             case 'shop':
-                return publish_cmd_shop($ctx, $dryRun);
+                return publish_cmd_shop($ctx, $dryRun, in_array('--force', $flags, true));
             case 'demo-site':
                 return publish_cmd_demo_site($ctx, $args, $dryRun);
             case 'vps-snapshot':

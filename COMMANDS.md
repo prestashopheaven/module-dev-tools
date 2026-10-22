@@ -261,7 +261,7 @@ publish a released version: the tag `v<version>` must exist, unless it runs in C
 | `docs [--dry-run] [--force] [--no-snapshot]` | Builds the site and uploads it by SFTP to `<DOCS_SITE_SFTP_PATH>/<module>/`, removes stale files there, then checks `<DOCS_SITE_URL>/<module>/index.php`. With `DEMO_SITE_SSH_HOST` set it then rewrites the intro page of the demo shop (`settings intro`), which links the docs site of every module. Afterwards a TransIP VPS snapshot, unless `--no-snapshot`. |
 | `demo [--dry-run] [--force] [--no-snapshot]` | Puts `dist/<module>.zip` in the demo shop (below). Needs the checked zip of the current code (`build` + `validate-zip`), except in CI. Afterwards a VPS snapshot, unless `--no-snapshot`. |
 | `vps-snapshot [<description>] [--dry-run]` | A TransIP snapshot of the whole VPS. `--dry-run` logs in read-only and lists the VPS and its snapshots. |
-| `shop [--dry-run]` | Creates the module as a product in your own sales shop through the PrestaShop webservice (below). Only on command, never in CI. |
+| `shop [--dry-run] [--force]` | Creates the module as a product in your own sales shop through the PrestaShop webservice (below). Only on command, never in CI. |
 | `done addons\|shop` | Records a manual step: the zip of this version is uploaded to PrestaShop Addons (Addons has no upload API), or put in the sales shop product by hand. |
 | `undo <step>` | Forgets a recorded step (`addons`, `docs`, `demo`, `shop`) of the current version. |
 | `help` | This list. |
@@ -283,6 +283,8 @@ address in every version, and the server lets a CDN cache them for years. `publi
 **`shop`: the product in the sales shop.**
 - **Once per module.** A product whose reference is the module's technical name is never changed: the command says
   it exists and stops. For a new version you put the zip in the product by hand, then `publish done shop`.
+- **No duplicates.** A product with the same name (any language) but another reference, e.g. made by hand, stops the
+  command too: set that product's reference to the module's technical name, or use `--force` to create a new one.
 - **Always inactive.** The product is created with `active=0` and read back; you activate it yourself. A shop whose
   webservice does not know `active` gets no product at all.
 - **What goes in:**

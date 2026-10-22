@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.17.1] - 2026-10-22
+
+### Gewijzigd
+- `publish shop` maakt geen dubbel product meer: heeft de winkel al een product met dezelfde naam (in een van de
+  talen, bijv. met de hand gemaakt met een andere referentie), dan stopt het en zegt het welk product; zet daar de
+  referentie op de technische modulenaam, dan herkent `publish shop` het voortaan. `--force` maakt toch een nieuw
+  product.
+
 ## [1.17.0] - 2026-10-22
 
 ### Toegevoegd

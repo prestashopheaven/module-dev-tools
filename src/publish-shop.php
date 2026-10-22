@@ -41,11 +41,12 @@ declare(strict_types=1);
 
 /**
  * Creates the product of the module in the sales shop, inactive, with texts in every shop language, images and
- * features; prints the manual steps that are left. A product with the module's reference is never changed.
+ * features; prints the manual steps that are left. A product with the module's reference is never changed; when a
+ * product with the same name exists (made by hand), nothing is created unless $force.
  *
  * @param array<string, mixed> $ctx
  */
-function publish_cmd_shop(array $ctx, bool $dryRun): int
+function publish_cmd_shop(array $ctx, bool $dryRun, bool $force = false): int
 {
     $plan = publish_shop_plan($ctx);
     $url = rtrim(publish_env($ctx, 'SALES_SHOP_URL'), '/');
@@ -72,6 +73,18 @@ function publish_cmd_shop(array $ctx, bool $dryRun): int
     }
     $fields = publish_shop_schema($ws);
     publish_shop_print_plan($ctx, $plan, $languages, $category, $tax);
+    $sameName = publish_shop_find_by_name($ws, $plan['name']);
+    if ($sameName !== []) {
+        $list = implode(', ', array_map(static fn (array $p): string => "#{$p['id']} (reference '" . $p['reference'] . "', " . ($p['active'] ? 'active' : 'inactive') . ')', $sameName));
+        echo "The shop already has a product with this name: $list.\n"
+            . "Is it this module? Set its reference to {$ctx['module']} in the back office: then publish shop knows it and never creates it again.\n";
+        if (!$force) {
+            echo $dryRun ? "Dry run: nothing created (a real run stops here; --force creates a new product anyway).\n" : "Nothing created, to avoid a duplicate. --force creates a new product anyway.\n";
+
+            return $dryRun ? 0 : 1;
+        }
+        echo "--force: creating a new product anyway.\n";
+    }
     if ($dryRun) {
         echo "Dry run: nothing created.\n";
 
@@ -305,6 +318,28 @@ function publish_shop_find_product(array $ws, string $module): ?array
     }
 
     return null;
+}
+
+/**
+ * Products whose name equals one of the module's names (any language, case ignored): a product made by hand before,
+ * without the module's reference. Creating another one would be a duplicate.
+ *
+ * @param array{api: string, key: string} $ws
+ * @param array<string, string> $names module language => product name
+ *
+ * @return array<int, array{id: int, reference: string, active: bool}>
+ */
+function publish_shop_find_by_name(array $ws, array $names): array
+{
+    $rows = (array) (publish_shop_ws($ws, 'GET', 'products', ['display' => '[id,name,reference,active]'])['body']['products'] ?? []);
+    $found = [];
+    foreach ($rows as $row) {
+        if (is_array($row) && publish_shop_match([$row], 'name', $names) !== null) {
+            $found[] = ['id' => (int) $row['id'], 'reference' => (string) ($row['reference'] ?? ''), 'active' => (string) ($row['active'] ?? '0') === '1'];
+        }
+    }
+
+    return $found;
 }
 
 /**
