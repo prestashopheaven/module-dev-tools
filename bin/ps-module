@@ -37,7 +37,7 @@
  *   ps-module translations <command> extract | status | todo | apply | fill | auto | accept | prune | mails-ok | build | check
  *   ps-module docs <command>         init | status | check | screenshots | frames | manual | marketing | build | mark-translated | preview | doctor:
  *                                    manuals (HTML + PDF), Addons marketing texts, screenshots and framed screenshots in docs/
- *   ps-module publish <command>      status [--check] | site | docs | demo | shop | done addons|shop | undo <step>:
+ *   ps-module publish <command>      status [--check] | site | docs | demo | shop [--update] | done addons|shop | undo <step>:
  *                                    release checklist per version (REL-08): Addons upload (by hand), docs site with the
  *                                    PDF manuals of every language (SFTP), install/upgrade in the demo shop (SSH),
  *                                    the product in the own sales shop (webservice, inactive, only on command)

@@ -262,6 +262,7 @@ publish a released version: the tag `v<version>` must exist, unless it runs in C
 | `demo [--dry-run] [--force] [--no-snapshot]` | Puts `dist/<module>.zip` in the demo shop (below). Needs the checked zip of the current code (`build` + `validate-zip`), except in CI. Afterwards a VPS snapshot, unless `--no-snapshot`. |
 | `vps-snapshot [<description>] [--dry-run]` | A TransIP snapshot of the whole VPS. `--dry-run` logs in read-only and lists the VPS and its snapshots. |
 | `shop [--dry-run] [--force]` | Creates the module as a product in your own sales shop through the PrestaShop webservice (below). Only on command, never in CI. |
+| `shop --update [--dry-run]` | New version: replaces the texts and images of the existing product (found by its reference) and makes sure of its features; price, tax rule, categories, active state, stock, the virtual file, visibility and reference stay (below). Exit 1 when the shop has no product with the module's reference. |
 | `done addons\|shop` | Records a manual step: the zip of this version is uploaded to PrestaShop Addons (Addons has no upload API), or put in the sales shop product by hand. |
 | `undo <step>` | Forgets a recorded step (`addons`, `docs`, `demo`, `shop`) of the current version. |
 | `help` | This list. |
@@ -281,8 +282,9 @@ when `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ZONE_ID` are set; otherwise their ad
 address in every version, and the server lets a CDN cache them for years. `publish docs` does the same for the PDFs.
 
 **`shop`: the product in the sales shop.**
-- **Once per module.** A product whose reference is the module's technical name is never changed: the command says
-  it exists and stops. For a new version you put the zip in the product by hand, then `publish done shop`.
+- **Once per module.** Without `--update`, a product whose reference is the module's technical name is never
+  changed: the command says it exists and stops. For a new version: `--update` (below), the zip in the product by
+  hand, then `publish done shop`.
 - **No duplicates.** A product with the same name (any language) but another reference, e.g. made by hand, stops the
   command too: set that product's reference to the module's technical name, or use `--force` to create a new one.
 - **Always inactive.** The product is created with `active=0` and read back; you activate it yourself. A shop whose
@@ -302,8 +304,29 @@ address in every version, and the server lets a CDN cache them for years. `publi
   PrestaShop's iso code, `si`/`vn` too, else on the language code: `pt-br` gets `pt`), otherwise English.
 - **By hand afterwards:** the zip in the Virtual product tab (PrestaShop has no API for virtual product files), the tax
   rule, stock, and activating the product.
+- **`--update`: a new version of an existing product.** Finds the product by its reference (none: exit 1, run
+  without `--update` first) and replaces what comes from the module repository; nothing else changes.
+  - Texts: name, short description, description, meta title, meta description and friendly URL in every shop
+    language, built exactly as on creation. A changed name gives a new friendly URL (no redirect from the old one).
+  - Images: the new set is uploaded first (cover, then the screenshots in `docs.json` order), then the texts are
+    saved, then the old images are removed, and then the first new image is made the cover. A failed upload or a
+    refused save removes the images of that run again: the product stays as it was. An old image that cannot be
+    removed is listed as a manual step.
+  - Features: as on creation (Multistore: Yes); another value of the same feature on the product is replaced, other
+    features stay.
+  - Kept as they are: price, tax rule, categories, active state, stock, the virtual product file, visibility and
+    reference. A webservice PUT replaces the whole product, so the command reads the full product, changes only the
+    texts, features and cover, leaves out the fields the shop refuses on PUT (`manufacturer_name`, `quantity`, `new`,
+    `position_in_category` and every field its synopsis marks read-only) and the empty ones (they stay NULL instead of
+    becoming 0), and sends the rest back as it was. Of the associations only `product_features` is sent: the shop
+    leaves categories, combinations, images and stock alone when they are not in the PUT. Afterwards it reads the
+    product again and warns when one of those fields differs.
+  - Before anything is written it checks that the key has `products` PUT and `images` POST + DELETE (exit 1 when not).
+  - Prints per text field in how many languages it changes, the images and the manual steps (the zip, checking,
+    activating), and records the step `shop`. `--dry-run` only reads from the shop and shows what would change.
 - **Webservice key** (Advanced Parameters > Webservice), permissions: `languages` GET; `products` GET + POST;
-  `images` POST; `product_features` and `product_feature_values` GET + POST.
+  `images` POST; `product_features` and `product_feature_values` GET + POST. `--update` also needs `products` PUT and
+  `images` DELETE.
 
 Options for all `publish` and `demo-site` commands:
 - `--env=<file>`: read the settings from this file first (e.g. `demo-site/local.env`). Server settings

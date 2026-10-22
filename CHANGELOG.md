@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.18.0] - 2026-10-22
+
+### Toegevoegd
+- `ps-module publish shop --update [--dry-run]`: werkt het bestaande product in de verkoopwinkel bij voor een nieuwe
+  versie (gevonden op de referentie; zonder product stopt het met exitcode 1). Naam, korte en lange omschrijving,
+  meta-teksten en vriendelijke URL komen in elke taal van de winkel opnieuw uit de module, zoals bij het aanmaken; de
+  afbeeldingen worden vervangen: eerst de nieuwe uploaden (cover, dan de screenshots in de volgorde van `docs.json`),
+  dan de teksten opslaan, dan de oude afbeeldingen weg en dan de eerste nieuwe als cover. Een mislukte upload of een
+  geweigerde opslag haalt de nieuwe afbeeldingen weer weg: het product blijft zoals het was. De features
+  (Multistore: Ja) staan er daarna zeker op. Prijs, belastingregel, categorieën, actief/inactief, voorraad, het bestand
+  van het virtuele product, zichtbaarheid en referentie blijven staan: de webservice-PUT krijgt het volledige product
+  terug, zonder de velden die de winkel bij een PUT weigert (`manufacturer_name`, `quantity`, `new`,
+  `position_in_category` en wat de synopsis read-only noemt), zonder lege velden (anders wordt NULL 0) en van de
+  associaties alleen `product_features` (PrestaShop laat de andere dan staan; 8.1 weigert een lege `product_bundle`);
+  na afloop wordt vergeleken. Een DELETE van een afbeelding wordt gecontroleerd door het product terug te lezen
+  (PrestaShop 8.1 verwijdert en antwoordt dan HTTP 500). Toont per tekstveld in hoeveel talen het verandert en legt de
+  stap `shop` vast. Extra webservicerechten: `products` PUT en `images` DELETE; die worden vooraf gecontroleerd.
+  Getest op PrestaShop 8.1.0 en 9.2.0.
+- Eigen tests van het package (`vendor/bin/phpunit`, ook in CI): `publish shop --update` tegen een nep-webservice die
+  PrestaShops PUT-regels nadoet.
+
 ## [1.17.1] - 2026-10-22
 
 ### Gewijzigd

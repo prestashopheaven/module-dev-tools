@@ -1,7 +1,7 @@
 name: CI
 
 # Checks on every push and pull request: PHP syntax of all scripts, the package's own
-# conventions (docblocks, DOC-01) and a start of the ps-module command.
+# conventions (docblocks, DOC-01), a start of the ps-module command and the package tests (tests/, PHPUnit).
 on:
   push:
   pull_request:
@@ -33,3 +33,9 @@ jobs:
 
       - name: ps-module starts
         run: php bin/ps-module help
+
+      - name: Install dependencies (PHPUnit for the tests)
+        run: composer install --no-interaction --no-progress
+
+      - name: Tests
+        run: vendor/bin/phpunit

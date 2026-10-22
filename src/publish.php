@@ -50,8 +50,14 @@
  *                                       the module as a product in the own sales shop (webservice, SALES_SHOP_*), only
  *                                       on command: created once and always INACTIVE, with name, descriptions and
  *                                       features (Multistore: Yes) in every shop language, the cover and the framed
- *                                       English screenshots; an existing product (same reference) is never changed, a
+ *                                       English screenshots; an existing product (same reference) is not changed, a
  *                                       product with the same name stops it (--force: create anyway).
+ *   ps-module publish shop --update [--dry-run]
+ *                                       new version: replaces the texts (every shop language) and the images (new ones
+ *                                       uploaded first, cover first, then the old ones removed) of the existing
+ *                                       product and makes sure of its features; price, tax rule, categories, active
+ *                                       state, stock, virtual file, visibility and reference stay. Exit 1 when there
+ *                                       is no product with the module's reference. Needs products PUT, images DELETE.
  *                                       The zip goes in by hand: PrestaShop has no API for virtual product files.
  *                                       Details: src/publish-shop.php
  *   ps-module publish done addons|shop  record a manual step: dist/<module>.zip of this version is uploaded to
@@ -159,7 +165,7 @@ function publish_main(array $argv): int
 
                 return $code === 0 && !$dryRun && !in_array('--no-snapshot', $flags, true) ? publish_after_deploy($ctx, 'demo') : $code;
             case 'shop':
-                return publish_cmd_shop($ctx, $dryRun, in_array('--force', $flags, true));
+                return publish_cmd_shop($ctx, $dryRun, in_array('--force', $flags, true), in_array('--update', $flags, true));
             case 'demo-site':
                 return publish_cmd_demo_site($ctx, $args, $dryRun);
             case 'vps-snapshot':
@@ -325,7 +331,7 @@ function publish_cmd_status(array $ctx, bool $check): int
         'addons' => 'upload ../dist/' . $ctx['module'] . '.zip in the Addons seller account, then: vendor/bin/ps-module publish done addons',
         'docs' => 'vendor/bin/ps-module publish docs' . (publish_env($ctx, 'DOCS_SITE_SFTP_HOST') === '' ? '   (needs DOCS_SITE_SFTP_* in .env)' : ''),
         'demo' => 'vendor/bin/ps-module publish demo' . (publish_env($ctx, 'DEMO_SITE_SSH_HOST') === '' ? '   (needs DEMO_SITE_SSH_* in .env)' : ''),
-        'shop' => 'vendor/bin/ps-module publish shop (creates the product once, inactive; a later version: put the zip in it by hand, then publish done shop)'
+        'shop' => 'vendor/bin/ps-module publish shop (creates the product once, inactive; a later version: publish shop --update for texts and images, put the zip in it by hand, then publish done shop)'
             . (publish_env($ctx, 'SALES_SHOP_URL') === '' ? '   (needs SALES_SHOP_* in .env)' : ''),
     ];
     $labels = ['addons' => 'Addons upload', 'docs' => 'Docs site (PDFs)', 'demo' => 'Demo shop', 'shop' => 'Sales shop'];
