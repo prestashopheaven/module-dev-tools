@@ -21,14 +21,79 @@
  * 1. extracts the zip next to modules/<module> and checks it holds <module>/<module>.php;
  * 2. swaps the directories (the old one is kept until the end);
  * 3. runs `bin/console prestashop:module install|upgrade <module>` (install when the module is not installed yet);
- * 4. clears the cache; on a failure in 3 the old directory comes back.
+ * 4. gives the limited demo profile(s) the rights on the module's pages, not the right to uninstall it (--rights);
+ * 5. clears the cache; on a failure in 3 the old directory comes back.
  * Prints "DEMO-OK <installed version>" at the end; exit code 0 = done.
+ *
+ *   php demo-install.php --rights <module>   only step 4 (also by hand, for a module that is installed already)
  */
 
 declare(strict_types=1);
 
 if (PHP_SAPI !== 'cli') {
     exit(1);
+}
+
+if (($argv[1] ?? '') === '--rights') {
+    $module = (string) ($argv[2] ?? '');
+    if (preg_match('/^[a-z][a-z0-9]{3,}$/', $module) !== 1 || !is_file('config/config.inc.php')) {
+        fwrite(STDERR, "Usage (in the root of the shop): php demo-install.php --rights <module>\n");
+        exit(2);
+    }
+    require 'config/config.inc.php';
+    demo_rights($module);
+    exit(0);
+}
+
+/**
+ * Rights of the limited demo profile(s) on a module. On install PrestaShop gives the module's own rights (configure,
+ * uninstall: ps_module_access) to every profile that may manage modules, but the rights on the module's back-office
+ * pages (its tabs: ps_access) only to SuperAdmin. A demo visitor could then uninstall the module but not open it. So
+ * every profile other than SuperAdmin that has a right on this module gets every right on its tabs and loses the right
+ * to uninstall it. Runs again on every upgrade (new tabs); a profile without any right on the module (taken away by
+ * hand on purpose) is left alone. Prints one line per profile.
+ */
+function demo_rights(string $module): void
+{
+    $db = Db::getInstance();
+    $p = _DB_PREFIX_;
+    $role = static fn (string $slug): int => (int) $db->getValue("SELECT id_authorization_role FROM {$p}authorization_role WHERE slug = '" . pSQL($slug) . "'");
+    $actions = ['CREATE', 'READ', 'UPDATE', 'DELETE'];
+    $moduleRoles = [];
+    foreach ($actions as $action) {
+        $moduleRoles[$action] = $role('ROLE_MOD_MODULE_' . strtoupper($module) . '_' . $action);
+    }
+    $known = implode(',', array_filter($moduleRoles)) ?: '0';
+    $rows = $db->executeS("SELECT DISTINCT id_profile FROM {$p}module_access WHERE id_authorization_role IN ($known) AND id_profile <> " . (int) _PS_ADMIN_PROFILE_);
+    $profiles = array_map('intval', array_column(is_array($rows) ? $rows : [], 'id_profile'));
+    $tabRoles = [];
+    $tabs = $db->executeS("SELECT class_name FROM {$p}tab WHERE module = '" . pSQL($module) . "'");
+    foreach (is_array($tabs) ? $tabs : [] as $tab) {
+        foreach ($actions as $action) {
+            $id = $role('ROLE_MOD_TAB_' . strtoupper((string) $tab['class_name']) . '_' . $action);
+            if ($id > 0) {
+                $tabRoles[] = $id;
+            }
+        }
+    }
+    $delete = $moduleRoles['DELETE'];
+    foreach ($profiles as $profile) {
+        $added = 0;
+        foreach ($tabRoles as $id) {
+            if (!$db->getValue("SELECT 1 FROM {$p}access WHERE id_profile = $profile AND id_authorization_role = $id")) {
+                $db->execute("INSERT INTO {$p}access (id_profile, id_authorization_role) VALUES ($profile, $id)");
+                ++$added;
+            }
+        }
+        $revoked = $delete > 0 && (bool) $db->getValue("SELECT 1 FROM {$p}module_access WHERE id_profile = $profile AND id_authorization_role = $delete")
+            && $db->delete('module_access', "id_profile = $profile AND id_authorization_role = $delete");
+        $name = (string) $db->getValue("SELECT name FROM {$p}profile_lang WHERE id_profile = $profile AND id_lang = " . (int) Configuration::get('PS_LANG_DEFAULT'));
+        echo "Rights of profile $profile ($name): $added of " . count($tabRoles) . ' right(s) on the module pages added, right to uninstall '
+            . ($revoked ? 'removed' : 'not there') . "\n";
+    }
+    if ($profiles === []) {
+        echo "Rights: no profile other than SuperAdmin has rights on $module, nothing to do.\n";
+    }
 }
 
 [$zipFile, $module, $php] = array_slice($argv, 1, 3) + ['', '', 'php'];
@@ -120,6 +185,11 @@ if ($code !== 0) {
     exit(1);
 }
 demo_remove($backup);
+// The rights of the limited demo profile(s), in a separate process (it loads PrestaShop): see demo_rights().
+passthru(escapeshellarg($php) . ' ' . escapeshellarg(__FILE__) . ' --rights ' . escapeshellarg($module) . ' 2>&1', $rightsCode);
+if ($rightsCode !== 0) {
+    echo "The rights of the demo profile(s) could not be set (exit $rightsCode): grant them by hand.\n";
+}
 demo_console($php, 'cache:clear --env=prod --no-warmup');
 
 // The version PrestaShop now has in ps_module (the installed one, not the one in the file).

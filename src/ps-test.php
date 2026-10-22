@@ -41,6 +41,7 @@ require_once __DIR__ . '/dod.php';
 require_once __DIR__ . '/composer-paths.php';
 require_once __DIR__ . '/verbose.php';
 require_once __DIR__ . '/ps-multistore.php';
+require_once __DIR__ . '/lock.php';
 
 $repoRoot = dod_repo_dir((string) getcwd());
 if ($repoRoot === null) {
@@ -72,6 +73,16 @@ ps_vlog('testing.json: module ' . $module . ', versions ' . implode(', ', (array
     . ', suites ' . json_encode($config['suites'] ?? []) . ', upgrade_from ' . ($config['upgrade_from'] ?? 'none')
     . ', multistore ' . json_encode($config['multistore'] ?? false) . ', db_image ' . ($config['db_image'] ?? 'mysql:8.0')
     . ', base_port ' . ($config['base_port'] ?? 8000));
+
+// The shops of this module are used by one command at a time: a second terminal or Claude session working on the same
+// module waits here instead of stopping the shops under the first one (lock.php). Other modules have their own shops.
+if (!in_array($command, ['doctor', 'help'], true)) {
+    try {
+        ps_lock('shops-' . $module, "shops $command " . implode(' ', $args), ROOT);
+    } catch (RuntimeException $e) {
+        fail($e->getMessage());
+    }
+}
 
 switch ($command) {
     case 'doctor':
@@ -184,6 +195,12 @@ final class Shop
 
             return;
         }
+        // Another module's shop (or another program) on this port would answer instead of this shop.
+        $other = $this->portTakenBy();
+        if ($other !== '') {
+            fail("Port {$this->port} is already used by $other. Give this module its own range (testing.json > base_port, "
+                . 'ports base_port + 100 * major + 10 * minor + patch), or stop that container.');
+        }
         $this->compose('up -d', true);
         out('Waiting for the PrestaShop installation (first run downloads the image; can take several minutes)...');
         $start = microtime(true);
@@ -201,6 +218,26 @@ final class Shop
             sleep(5);
         }
         fail("PrestaShop {$this->version} did not become ready. Check: docker compose -p {$this->project} logs prestashop");
+    }
+
+    /**
+     * What else listens on the port of this shop: a container of another compose project (its name), "a program
+     * outside Docker" when the port answers without a container of this project, or '' when the port is free or ours.
+     */
+    public function portTakenBy(): string
+    {
+        $names = trim(shellOutput('docker ps --filter ' . escapeshellarg('publish=' . $this->port) . ' --format "{{.Names}}"'));
+        if ($names === '') {
+            return httpStatus("http://localhost:{$this->port}/") > 0 && trim(shellOutput($this->composeCmd('ps -q'))) === ''
+                ? 'a program outside Docker' : '';
+        }
+        foreach (preg_split('/\R/', $names) ?: [] as $name) {
+            if ($name !== '' && !str_starts_with($name, $this->project . '-') && !str_starts_with($name, $this->project . '_')) {
+                return "the Docker container $name";
+            }
+        }
+
+        return '';
     }
 
     /**
@@ -423,7 +460,16 @@ final class Shop
         $dir = ROOT . '/tests/behat';
         if (!is_dir("$dir/vendor")) {
             ps_vlog("behat: $dir/vendor is missing, installing the Behat dependencies");
-            runShown('composer install --no-interaction --no-progress --working-dir=' . escapeshellarg($dir));
+            if (runShown('composer install --no-interaction --no-progress --working-dir=' . escapeshellarg($dir)) === 0) {
+                behatAutoloadRecord($dir);
+            }
+        } elseif (behatAutoloadOutdated($dir)) {
+            // composer.json changed after the last install (e.g. a renamed namespace): the old class map would not
+            // find the contexts ("FeatureContext context class not found"). The lock file there is local only.
+            out('tests/behat/composer.json changed since the last install: updating the Behat dependencies and autoloader.');
+            if (runShown('composer update --no-interaction --no-progress --working-dir=' . escapeshellarg($dir)) === 0) {
+                behatAutoloadRecord($dir);
+            }
         }
         $baseUrl = "http://localhost:{$this->port}";
         ps_vlog("behat: $dir/behat.yml against $baseUrl (PS_BASE_URL and BEHAT_PARAMS base_url)");
@@ -513,6 +559,45 @@ final class Shop
         putenv('DB_IMAGE=' . ($this->config['db_image'] ?? 'mysql:8.0'));
 
         return 'docker compose -p ' . escapeshellarg($this->project) . ' -f ' . escapeshellarg(COMPOSE_FILE) . ' ' . $args;
+    }
+}
+
+/**
+ * True when tests/behat/composer.json changed since the Behat dependencies were installed: its hash differs from the
+ * one recorded after the last install (behatAutoloadRecord()), or, without a record (older installs), it names a PSR-4
+ * namespace the autoloader does not know. Composer only rewrites its autoload files when they change, so file times
+ * say nothing here.
+ */
+function behatAutoloadOutdated(string $dir): bool
+{
+    $autoload = "$dir/vendor/composer/autoload_psr4.php";
+    if (!is_file($autoload) || !is_file("$dir/composer.json")) {
+        return is_file("$dir/composer.json");
+    }
+    $record = "$dir/vendor/.ps-module-composer-json.sha1";
+    if (is_file($record)) {
+        return trim((string) file_get_contents($record)) !== sha1_file("$dir/composer.json");
+    }
+    $composer = json_decode((string) file_get_contents("$dir/composer.json"), true);
+    $known = (string) file_get_contents($autoload);
+    foreach (array_keys(array_merge((array) ($composer['autoload']['psr-4'] ?? []), (array) ($composer['autoload-dev']['psr-4'] ?? []))) as $namespace) {
+        if (!str_contains($known, var_export((string) $namespace, true))) {
+            ps_vlog("behat: namespace $namespace of composer.json is not in $autoload");
+
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Records the hash of tests/behat/composer.json after a successful install or update (see behatAutoloadOutdated()).
+ */
+function behatAutoloadRecord(string $dir): void
+{
+    if (is_dir("$dir/vendor") && is_file("$dir/composer.json")) {
+        @file_put_contents("$dir/vendor/.ps-module-composer-json.sha1", sha1_file("$dir/composer.json") . "\n");
     }
 }
 

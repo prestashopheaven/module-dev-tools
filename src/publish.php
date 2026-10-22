@@ -97,6 +97,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/dod.php';
 require_once __DIR__ . '/verbose.php';
 require_once __DIR__ . '/publish-shop.php';
+require_once __DIR__ . '/lock.php';
 
 const PUBLISH_STEPS = ['addons', 'docs', 'demo', 'shop'];
 
@@ -149,6 +150,11 @@ function publish_main(array $argv): int
     }
 
     try {
+        // Commands of other modules (other terminals, other Claude sessions) that use the same server wait here.
+        $lock = publish_lock_name($command, $flags, $dryRun);
+        if ($lock !== null) {
+            ps_lock($lock, trim("publish $command " . implode(' ', $args)) . ($ctx['module'] !== '' ? " ({$ctx['module']} {$ctx['version']})" : ''), $ctx['repo']);
+        }
         switch ($command) {
             case 'status':
                 return publish_cmd_status($ctx, in_array('--check', $flags, true));
@@ -186,6 +192,33 @@ function publish_main(array $argv): int
 
         return 1;
     }
+}
+
+/**
+ * The shared resource a command needs for itself (lock.php), or null: the demo server (docs site, demo shop, VPS
+ * snapshot: one VPS) or the sales shop. A dry run changes nothing and does not wait. With --env=<file> the commands go
+ * to another server (e.g. the local Docker demo shop): that one has its own lock.
+ *
+ * @param string[] $flags
+ */
+function publish_lock_name(string $command, array $flags, bool $dryRun): ?string
+{
+    if ($dryRun) {
+        return null;
+    }
+    $resource = match ($command) {
+        'docs', 'demo', 'demo-site', 'vps-snapshot' => 'demo-server',
+        'shop' => 'sales-shop',
+        default => null,
+    };
+    foreach ($flags as $flag) {
+        if ($resource !== null && str_starts_with($flag, '--env=')) {
+            $file = substr($flag, 6);
+            $resource .= '-' . substr(sha1(str_replace('\\', '/', (string) (realpath($file) ?: $file))), 0, 8);
+        }
+    }
+
+    return $resource;
 }
 
 /**

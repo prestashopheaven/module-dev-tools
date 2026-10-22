@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.19.0] - 2026-10-22
+
+### Toegevoegd
+- Meerdere modules tegelijk (andere terminals, andere Claude-sessies): commando's die iets gedeelds gebruiken wachten
+  op elkaar met een lock (`src/lock.php`) in plaats van elkaar in de weg te zitten. `demo-server`: `publish docs`,
+  `publish demo`, `publish vps-snapshot` en elk `demo-site`-commando (met `--env=<file>` een eigen lock per server);
+  `sales-shop`: `publish shop`; `shops-<module>`: elk `shops`-commando en de screenshots van `docs`; `docs-image`: het
+  bouwen van de docs-image. Een wachtend commando meldt elke minuut wie het lock heeft (commando, module, proces,
+  sinds) en gaat verder zodra het vrij is; na `PS_MODULE_LOCK_TIMEOUT` seconden (3600) stopt het. De locks staan in
+  `MODULES/.cache/locks/`; het besturingssysteem geeft ze vrij als het proces stopt, ook na een crash. Een commando dat
+  door een lockhouder is gestart (de `shops`-commando's van `docs build`) wacht niet op zichzelf. `--dry-run` wacht niet.
+- `shops up`/`run`: stopt met een duidelijke melding als een container van een ander project (of een ander programma)
+  de poort van de winkel al gebruikt, in plaats van tegen de verkeerde winkel te testen.
+- `demo-install.php` (`publish demo`): na de installatie of upgrade krijgt elk profiel behalve SuperAdmin dat rechten
+  op de module heeft (de profielen die modules mogen beheren, zoals het beperkte demo-account) alle rechten op de
+  back-office-pagina's van de module (PrestaShop geeft die alleen aan SuperAdmin), en verliest het het recht om de
+  module te verwijderen. Bij elke upgrade opnieuw (nieuwe tabs). `php demo-install.php --rights <module>` doet alleen dit.
+  Getest op PrestaShop 9.2.0.
+
+### Gewijzigd
+- `shops behat`/`run`: is `tests/behat/composer.json` gewijzigd sinds de laatste installatie (bijv. een hernoemde
+  namespace), dan worden de Behat-dependencies en de autoloader eerst bijgewerkt; anders vond Behat de contexts niet
+  ("FeatureContext context class not found"). Vastgelegd met een hash van `composer.json` in `tests/behat/vendor/`.
+- `validate`: de cache van de validatorregels (in de temp-map, gedeeld door alle modules) wordt atomair geschreven.
+- Eigen tests: `LockTest` (wachten, melding, timeout, vrijgave na een crash, kindprocessen).
+
 ## [1.18.0] - 2026-10-22
 
 ### Toegevoegd

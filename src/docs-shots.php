@@ -30,6 +30,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/verbose.php';
+require_once __DIR__ . '/lock.php';
 
 /**
  * Runs a command (an argument list, no shell) with a timeout; returns the exit code and the output.
@@ -194,8 +195,20 @@ function docs_ensure_image(): array
         return $result = ['error' => ''];
     }
     ps_vlog('docs image ' . docs_image_tag() . ': not present, building it from ' . DOCS_RESOURCES . '/docs/Dockerfile');
+    // Two modules building the same image at the same time: the second waits and then finds it.
+    try {
+        ps_lock('docs-image', 'docker build ' . docs_image_tag(), (string) getcwd());
+    } catch (RuntimeException $e) {
+        return $result = ['error' => $e->getMessage()];
+    }
+    if (docs_image_exists()) {
+        ps_unlock('docs-image');
+
+        return $result = ['error' => ''];
+    }
     echo 'Building the docs image ' . docs_image_tag() . " (Chromium + Noto fonts; only the first time, a few minutes)...\n";
     [$code] = docs_exec(['docker', 'build', '-t', docs_image_tag(), '-f', DOCS_RESOURCES . '/docs/Dockerfile', DOCS_RESOURCES . '/docs'], 1800, null, true);
+    ps_unlock('docs-image');
 
     return $result = ['error' => $code === 0 ? '' : 'building the docs image failed (docker build, exit code ' . $code . ')'];
 }
@@ -618,6 +631,35 @@ function docs_shop_iso(array $ctx, string $iso): string
  * @return array{results: array<int, array<string, mixed>>, fallbacks: array<string, string>, notes: string[], languages: array<string, array{shop_language: string}>}|array{error: string}
  */
 function docs_shots_on_shop(array $ctx, string $version, array $shots, bool $keep): array
+{
+    // The same shops as `ps-module shops`: another command on this module's shops waits (and the other way round).
+    // The shops commands started from here see that this process holds the lock (lock.php) and do not wait for it.
+    $held = ps_lock_held('shops-' . $ctx['module']);
+
+    try {
+        ps_lock('shops-' . $ctx['module'], "docs screenshots on PrestaShop $version", $ctx['repo']);
+    } catch (RuntimeException $e) {
+        return ['error' => $e->getMessage()];
+    }
+
+    try {
+        return docs_shots_on_locked_shop($ctx, $version, $shots, $keep);
+    } finally {
+        if (!$held) {
+            ps_unlock('shops-' . $ctx['module']);
+        }
+    }
+}
+
+/**
+ * docs_shots_on_shop() once the shops of the module are locked for this process.
+ *
+ * @param array<string, mixed> $ctx
+ * @param array<int, array<string, mixed>> $shots
+ *
+ * @return array{results: array<int, array<string, mixed>>, fallbacks: array<string, string>, notes: string[], languages: array<string, array{shop_language: string}>}|array{error: string}
+ */
+function docs_shots_on_locked_shop(array $ctx, string $version, array $shots, bool $keep): array
 {
     $port = docs_shop_port($ctx, $version);
     $project = $ctx['module'] . '-ps' . str_replace('.', '', $version);

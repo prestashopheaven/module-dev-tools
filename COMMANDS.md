@@ -28,6 +28,27 @@ Notation: `<x>` is required, `[x]` is optional, `a|b` means one of them, `...` m
 |---|---|
 | `-v`, `--verbose` | Anywhere on the line, e.g. `ps-module -v publish demo` or `ps-module shops run -v`. The same as `PS_MODULE_VERBOSE=1` (also `true`, `yes`, `on`). Reports every step on **STDERR** with a time stamp (`[v 12:34:56] ...`): the settings read, every program started (command line, folder, exit code, time), files written, HTTP requests (URL, status, time), and for server commands the SSH login, every upload, remote command and delete. On the demo server, `demo-site.sh` and its helpers report their steps too. Secrets show as `***`. Normal output (STDOUT) and exit codes stay the same, so `--json` output can still be piped. |
 
+## Shared resources: one at a time
+
+Several modules can be worked on at the same time (other terminals, other Claude sessions). Commands that use
+something the modules share wait for each other instead of getting in each other's way:
+
+| Lock | Taken by |
+|---|---|
+| `demo-server` | `publish docs`, `publish demo`, `publish vps-snapshot`, every `demo-site` command (the docs site, the demo shop and the VPS are one server). With `--env=<file>` (another server, e.g. the local Docker demo shop) the lock has a name of its own. |
+| `sales-shop` | `publish shop` (also `--update`) |
+| `shops-<module>` | every `shops` command except `doctor`, and the screenshots of `docs` (the same Docker shops) |
+| `docs-image` | building the docs-tools Docker image |
+
+A dry run (`--dry-run`) does not wait. A waiting command says every minute who holds the lock (command, module,
+process, since when) and goes on as soon as it is free; after `PS_MODULE_LOCK_TIMEOUT` seconds (default 3600) it
+stops with exit 1. The locks are files in `MODULES/.cache/locks/` (the nearest folder upwards with
+`libraries/module-dev-tools` or a `.env`; otherwise the system temp folder; `PS_MODULE_LOCK_DIR` sets another one).
+The operating system releases a lock when its process ends, also after a crash, so nothing is ever left behind. A
+command started by a command that holds a lock (e.g. the `shops` commands of `docs build`) does not wait for it.
+Different modules have their own test shops, ports and files: their `shops run`, `verify` and `docs build` run side
+by side. `shops up` stops with a clear message when another container already uses the port of the shop.
+
 Commands marked *(module)* must run inside a module (a folder with `<name>.php` and `composer.json`) and exit 2
 elsewhere. Commands marked *(repo)* need a module repository (`module.spec.json`).
 
@@ -437,7 +458,11 @@ Commands that change the shop wait for each other (`flock`, up to an hour).
 Run in the root of the shop. Installs or upgrades a module from a zip:
 1. The old files are kept aside until the install succeeds.
 2. Runs `bin/console prestashop:module install|upgrade`.
-3. Clears the cache and prints `DEMO-OK <installed version>`.
+3. Rights of the limited demo profile(s): every profile other than SuperAdmin that has a right on the module (PrestaShop
+   gives those to the profiles that may manage modules) gets every right on the module's back-office pages (its tabs,
+   which PrestaShop only gives to SuperAdmin) and loses the right to uninstall the module. Again on every upgrade.
+   `php demo-install.php --rights <module>` does only this.
+4. Clears the cache and prints `DEMO-OK <installed version>`.
 
 On a failure the previous version comes back.
 - **Exit codes:** 2 with the reason (zip not found, bad module name, not a shop root), 1 when the install failed.
@@ -483,6 +508,7 @@ Credentials are always masked in output.
 | Setting | Used by | Meaning (default) |
 |---|---|---|
 | `PS_MODULE_VERBOSE` | all | `1` = verbose (as `-v`) |
+| `PS_MODULE_LOCK_TIMEOUT`, `PS_MODULE_LOCK_DIR` | `publish`, `demo-site`, `shops`, `docs` | how long to wait for a shared resource (3600 s), folder of the lock files |
 | `PRESTASHOP_VALIDATOR_API_KEY`, `PRESTASHOP_VALIDATOR_URL` | `validator-api`, `status` | online validator |
 | `DEEPL_API_KEY`, `DEEPL_API_URL` | `translations auto` | DeepL |
 | `PACKAGIST_USERNAME`, `PACKAGIST_TOKEN` | library releases | Packagist |

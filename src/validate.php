@@ -159,7 +159,11 @@ function loadRules(): array
         $live = @file_get_contents('https://validator.prestashop.com/rules', false, stream_context_create(['http' => ['timeout' => 10]]));
         ps_vdone('GET rules' . (function_exists('http_get_last_response_headers') ? ' (' . (http_get_last_response_headers()[0] ?? 'no response') . ')' : ''), $start, $live === false ? 'failed' : null);
         if ($live !== false && is_array(json_decode($live, true))) {
-            file_put_contents($cache, $live);
+            // Write then rename: another module's validate may read the cache at this moment.
+            $part = $cache . '.' . getmypid() . '.part';
+            if (file_put_contents($part, $live) !== false && !@rename($part, $cache)) {
+                @unlink($part);
+            }
             $json = $live;
             ps_vlog("validate: live rules cached in $cache");
         }
