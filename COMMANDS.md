@@ -379,6 +379,7 @@ Recorded steps: `<repo>/.cache/publish/<version>.json`.
 | `demo-mode on\|off` | PrestaShop's demo mode (`_PS_MODE_DEMO_`). Keep it **on** on the live demo. | yes |
 | `settings [intro]` | The fixed demo settings again (e-mail off, demo employee, login filled in, brand, intro page). With `intro`: only the intro page (its list of modules), the rest of the shop stays as it is. | yes |
 | `push <snapshot-dir>` | Uploads a snapshot made elsewhere (local: `demo-site/server/snapshots/latest`) and makes it the server's latest: restore + test, the previous one back on a failure. Then a VPS snapshot. | yes |
+| `apply <dir> [<note>] [--no-snapshot]` | Uploads a folder with `apply.php` (e.g. the test data of all modules: `MODULES/test-site`, `php test-site/test-site.php demo`) and runs it in the shop as it is: test before and after, the database back on a failure, else a new demo snapshot. Then a VPS snapshot (unless `--no-snapshot`). | yes |
 | `vps-snapshot [<description>]` | The same as `publish vps-snapshot`. | VPS snapshot |
 
 ## Git workflow (`git`)
@@ -421,6 +422,7 @@ run them, but they can also be run by hand over SSH.
 | `restore [<snapshot>]` | Default `latest`. Puts back the files (rsync, or a folder swap without rsync) and the database (all tables dropped first). Keeps the server's own `parameters.php`. Sets the domain from `URL`, regenerates `.htaccess`, clears and warms the cache, applies the demo settings. |
 | `activate <snapshot>` | Makes an uploaded snapshot the latest: restore + test, the previous latest back on a failure. |
 | `deploy <zip> <module>` | Restore latest → install or upgrade (`demo-install.php`) → settings → test → new snapshot. Back to the snapshot of before on a failure. Prints `DEMO-OK <version>`. |
+| `apply <dir> [<note>]` | Test before → `php <dir>/apply.php` in the shop root (gets `DEMO_SITE_URL` and `DEMO_SITE_ADMIN_DIR`; must print `APPLY-OK`) → intro page → test → new snapshot. On a failure (no `APPLY-OK`, or pages that broke since the test before) only the database goes back. Prints `APPLY-OK`. |
 | `demo-mode on\|off` | Sets `_PS_MODE_DEMO_` in `config/defines.inc.php`. |
 | `settings [intro]` | Runs `demo-settings.php` (`intro`: only the intro page). |
 | `test` | Smoke test; result in `snapshots/last-test.json`. |

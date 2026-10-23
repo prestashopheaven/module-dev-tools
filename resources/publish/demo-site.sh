@@ -36,6 +36,10 @@
 #                                      the other files and settings stay) -> intro page -> test -> new snapshot. The
 #                                      test runs before the install too: only pages that broke since then count. On a
 #                                      failure only the module folder and the database go back to how they were.
+#   demo-site.sh apply <dir> [note]    runs <dir>/apply.php in the shop as it is (e.g. the test data of all modules,
+#                                      `ps-module demo-site apply`) -> intro page -> test -> new snapshot. apply.php must
+#                                      print APPLY-OK. Like deploy: the test runs before it too, and on a failure the
+#                                      database goes back to how it was (files it wrote stay until the next restore)
 #   demo-site.sh install-cron          cron job for `nightly` at CRON_TIME (default 30 3 * * *)
 #   demo-site.sh status                latest snapshot, snapshots on disk, last test
 #   demo-site.sh paths                 SNAPSHOT_DIR and PS_ROOT (for `ps-module demo-site push`)
@@ -516,6 +520,63 @@ cmd_deploy() {
     echo "DEMO-OK $version"
 }
 
+# Runs <dir>/apply.php (PHP CLI, in PS_ROOT, as this user) in the shop as it is: data for the demo that is made with
+# PrestaShop itself, e.g. the test data of every module (`ps-module demo-site apply`). The same safety net as deploy.
+# apply.php gets the public address and the back-office folder in DEMO_SITE_URL / DEMO_SITE_ADMIN_DIR.
+cmd_apply() {
+    require_root
+    init_mycnf
+    local dir="${1:-}" note="${2:-apply}" output backup db began f new=() before=()
+    [ -f "$dir/apply.php" ] || die "usage: demo-site.sh apply <dir with apply.php> [note]"
+    dir="$(readlink -f "$dir")"
+    log "apply $note: $dir/apply.php in the shop as it is"
+    backup="$DIR/.apply-$$"
+    DEPLOY_BACKUP="$backup"
+    mkdir -p "$backup"
+    db="$(db_param database_name)"
+    began=$SECONDS
+    "$MYSQLDUMP" --defaults-extra-file="$MYCNF" --single-transaction --quick --routines --no-tablespaces "$db" | gzip > "$backup/db.sql.gz"
+    vlog "database copied aside for a rollback ($(vsize "$backup/db.sql.gz")) in $((SECONDS - began))s"
+    log "test before apply.php (problems that are already there do not stop it)"
+    cmd_test || true
+    before=("${TEST_FAILURES[@]+"${TEST_FAILURES[@]}"}")
+    vlog "\$ $PHP $dir/apply.php   (in PS_ROOT)"
+    if ! output="$(cd "$PS_ROOT" && VERBOSE="$VERBOSE" DEMO_SITE_URL="$URL" DEMO_SITE_ADMIN_DIR="$(admin_dir)" "$PHP" -d memory_limit=2048M "$dir/apply.php" 2>&1)" \
+        || ! printf '%s\n' "$output" | grep -q '^APPLY-OK'; then
+        echo "$output"
+        apply_rollback "$backup" "apply.php failed"
+        exit 1
+    fi
+    echo "$output"
+    clear_cache
+    cmd_settings intro
+    warm_cache
+    if ! cmd_test; then
+        for f in "${TEST_FAILURES[@]}"; do
+            if ! printf '%s\n' "${before[@]+"${before[@]}"}" | grep -Fxq -- "$f"; then new+=("$f"); fi
+        done
+        if [ "${#new[@]}" -gt 0 ]; then
+            for f in "${new[@]}"; do log "new since apply.php: $f"; done
+            apply_rollback "$backup" "the shop fails its test after apply.php"
+            exit 1
+        fi
+        log "test: the same problems as before, none new: the change stands"
+    fi
+    cmd_snapshot "$note"
+    echo "APPLY-OK"
+}
+
+# A failed apply: the database as it was right before it (the copy of cmd_apply).
+apply_rollback() {
+    local backup="$1" reason="$2"
+    log "apply: $reason; the database goes back to how it was before"
+    db_import "$backup/db.sql.gz"
+    clear_cache
+    cmd_settings intro || true
+    warm_cache
+    log "apply: rolled back"
+}
+
 # A failed deploy: modules/<module> and the database as they were right before it (the copies of cmd_deploy).
 deploy_rollback() {
     local module="$1" backup="$2" reason="$3"
@@ -600,6 +661,7 @@ case "$command" in
     test) cmd_test ;;
     nightly) lock; log "nightly reset"; cmd_restore latest; cmd_test ;;
     deploy) lock; cmd_deploy "$@" ;;
+    apply) lock; cmd_apply "$@" ;;
     activate) lock; cmd_activate "$@" ;;
     demo-mode) lock; cmd_demo_mode "$@" ;;
     settings) case "${1:-}" in "" | intro) ;; *) die "usage: demo-site.sh settings [intro]" ;; esac; lock; cmd_settings "${1:-}" ;;

@@ -247,7 +247,12 @@ foreach ($modules as $module) {
         $docs = '<br><a class="docs" href="' . $e($docsBase . '/' . $module['name'] . '/index.php') . '">Documentation and manuals (PDF, all languages)</a>';
         $linked[] = $module['name'];
     }
-    $items .= '<li><strong>' . $e($module['display']) . '</strong> <span>v' . $e($module['version']) . '</span><br>'
+    // Test data and scenarios of the module (MODULES/test-site, `ps-module demo-site apply`): /test-site/#<module>.
+    if (is_file(_PS_ROOT_DIR_ . '/test-site/data/' . $module['name'] . '.json')) {
+        $docs .= '<br><a class="docs" href="' . $e($base . '/test-site/#' . $module['name']) . '">Things to try: test data and scenarios</a>';
+    }
+    // data-module / data-version: machine-readable, for tools that check which version the demo runs.
+    $items .= '<li data-module="' . $e($module['name']) . '" data-version="' . $e($module['version']) . '"><strong>' . $e($module['display']) . '</strong> <span>v' . $e($module['version']) . '</span><br>'
         . $e($module['description']) . $docs . "</li>\n";
 }
 demo_vlog('intro docs links: ' . ($linked !== [] ? implode(', ', $linked) . " at $docsBase/<module>/index.php" : 'none (no <module>/index.php in the shop root and no docs URL)'));

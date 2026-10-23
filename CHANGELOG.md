@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.20.0] - 2026-10-23
+
+### Toegevoegd
+- `ps-module demo-site apply <dir> [note] [--no-snapshot] [--dry-run]`: uploadt een map met `apply.php` naar de
+  demoserver en draait `demo-site.sh apply`: `apply.php` in de winkel zoals hij is (met `DEMO_SITE_URL` en
+  `DEMO_SITE_ADMIN_DIR`), met hetzelfde vangnet als `deploy`: test ervoor en erna, bij een fout (geen `APPLY-OK`, of
+  pagina's die sindsdien kapot zijn) gaat de database terug, anders een nieuwe demo-snapshot en een VPS-snapshot. Voor
+  de testgegevens van alle modules in de demo (`MODULES/test-site`, `php test-site/test-site.php demo`).
+- Introductiepagina van de demo (`demo-settings.php`): per module een link "Things to try" naar `/test-site/#<module>`
+  als de testgegevens van die module in de winkel staan, en `data-module`/`data-version` op elke module (leesbaar voor
+  tools).
+- Eigen tests: `PublishDemoApplyTest` (bestanden van de map, weigeren zonder `apply.php`, dry run, het serverscript).
+
 ## [1.19.0] - 2026-10-22
 
 ### Toegevoegd

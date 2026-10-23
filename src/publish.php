@@ -38,6 +38,10 @@
  *                                       upload a snapshot made elsewhere (the local Docker copy: demo-site/server/
  *                                       snapshots/latest) and make it the server's latest: restore + test, back on a
  *                                       failure; then a VPS snapshot
+ *   ps-module demo-site apply <dir> [note] [--no-snapshot] [--dry-run]
+ *                                       upload a folder with apply.php (e.g. the test data of all modules, MODULES/
+ *                                       test-site) and run it in the demo shop as it is: test before and after, the
+ *                                       database back on a failure, else a new demo snapshot; then a VPS snapshot
  *   --env=<file>                        read the settings from this file first (e.g. demo-site/local.env)
  *   -v / --verbose (ps-module -v ...)   every setting read (credentials as ***), the SSH login, every upload, remote
  *                                       command (exit code, time) and HTTP request, and the steps of demo-site.sh on
@@ -173,7 +177,7 @@ function publish_main(array $argv): int
             case 'shop':
                 return publish_cmd_shop($ctx, $dryRun, in_array('--force', $flags, true), in_array('--update', $flags, true));
             case 'demo-site':
-                return publish_cmd_demo_site($ctx, $args, $dryRun);
+                return publish_cmd_demo_site($ctx, $args, $dryRun, $flags);
             case 'vps-snapshot':
                 return publish_cmd_vps_snapshot($ctx, (string) ($args[0] ?? 'manual snapshot'), $dryRun) ? 0 : 1;
             case 'done':
@@ -745,12 +749,13 @@ function publish_module_asset_urls(string $zipFile, string $module, string $shop
  *
  * @param array<string, mixed> $ctx
  * @param string[] $args
+ * @param string[] $flags
  */
-function publish_cmd_demo_site(array $ctx, array $args, bool $dryRun): int
+function publish_cmd_demo_site(array $ctx, array $args, bool $dryRun, array $flags = []): int
 {
     $command = (string) ($args[0] ?? 'status');
-    if (!in_array($command, ['check', 'install-prestashop', 'setup', 'status', 'snapshot', 'restore', 'test', 'nightly', 'demo-mode', 'settings', 'config', 'push', 'vps-snapshot'], true)) {
-        fwrite(STDERR, "ps-module demo-site: check | install-prestashop | setup | status | snapshot [note] | restore [<snapshot>] | test | nightly | demo-mode on|off | settings | config | push <snapshot-dir> | vps-snapshot [<description>]\n");
+    if (!in_array($command, ['check', 'install-prestashop', 'setup', 'status', 'snapshot', 'restore', 'test', 'nightly', 'demo-mode', 'settings', 'config', 'push', 'apply', 'vps-snapshot'], true)) {
+        fwrite(STDERR, "ps-module demo-site: check | install-prestashop | setup | status | snapshot [note] | restore [<snapshot>] | test | nightly | demo-mode on|off | settings | config | push <snapshot-dir> | apply <dir> [note] | vps-snapshot [<description>]\n");
 
         return 2;
     }
@@ -782,6 +787,9 @@ function publish_cmd_demo_site(array $ctx, array $args, bool $dryRun): int
     }
     if ($command === 'push') {
         return publish_demo_push($ctx, (string) ($args[1] ?? ''), $dryRun);
+    }
+    if ($command === 'apply') {
+        return publish_demo_apply($ctx, (string) ($args[1] ?? ''), (string) ($args[2] ?? ''), $dryRun, in_array('--no-snapshot', $flags, true));
     }
     if ($command === 'config') {
         // A changed setting (languages, URL, login, cron time): rewrite demo-site.conf and apply it, without a new
@@ -1006,6 +1014,79 @@ function publish_demo_push(array $ctx, string $local, bool $dryRun): int
     }
 
     return publish_after_deploy($ctx, 'demo-site push');
+}
+
+/**
+ * The files of a local folder for `demo-site apply`: path relative to the folder => absolute path, sorted. Skips
+ * dot files and folders (.git, .DS_Store).
+ *
+ * @return array<string, string>
+ *
+ * @throws RuntimeException when the folder has no apply.php
+ */
+function publish_apply_files(string $local): array
+{
+    $dir = $local !== '' ? realpath($local) : false;
+    if ($dir === false || !is_file("$dir/apply.php")) {
+        throw new RuntimeException('usage: ps-module demo-site apply <folder with apply.php> [note]');
+    }
+    $dir = str_replace('\\', '/', $dir);
+    $files = [];
+    $iterator = new RecursiveIteratorIterator(new RecursiveCallbackFilterIterator(
+        new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS),
+        static fn (SplFileInfo $file): bool => !str_starts_with($file->getFilename(), '.')
+    ));
+    foreach ($iterator as $file) {
+        $path = str_replace('\\', '/', $file->getPathname());
+        $files[substr($path, strlen($dir) + 1)] = $path;
+    }
+    ksort($files);
+
+    return $files;
+}
+
+/**
+ * Uploads a folder with apply.php to the demo server (DEMO_SITE_TOOLS_DIR/uploads/apply-<time>/) and runs
+ * `demo-site.sh apply` on it: apply.php in the shop as it is, test before and after, the database back on a failure,
+ * else a new demo snapshot. The folder is removed from the server afterwards. Then a VPS snapshot (unless
+ * --no-snapshot) when TRANSIP_* is set.
+ *
+ * @param array<string, mixed> $ctx
+ *
+ * @throws RuntimeException when the folder has no apply.php or an upload fails
+ */
+function publish_demo_apply(array $ctx, string $local, string $note, bool $dryRun, bool $noSnapshot): int
+{
+    $files = publish_apply_files($local);
+    $note = $note !== '' ? $note : 'apply ' . basename((string) realpath($local));
+    $size = array_sum(array_map('filesize', $files));
+    $tools = publish_demo_tools_dir($ctx);
+    $remote = "$tools/uploads/apply-" . date('Ymd-His');
+    if ($dryRun) {
+        printf("Dry run: would upload %d file(s) (%s) to the demo server and run demo-site.sh apply (\"%s\"): apply.php in the shop, test, new snapshot%s.\n", count($files), publish_size($size), $note, $noSnapshot ? '' : ', VPS snapshot');
+
+        return 0;
+    }
+    $ssh = publish_connect($ctx, 'DEMO_SITE_SSH');
+    publish_demo_upload_tools($ssh, $tools, false);
+    foreach ($files as $relative => $path) {
+        $target = "$remote/$relative";
+        if (!$ssh->is_dir(dirname($target)) && !$ssh->mkdir(dirname($target), 0700, true)) {
+            throw new RuntimeException('cannot create ' . dirname($target) . '.');
+        }
+        if (!$ssh->put($target, $path, \phpseclib3\Net\SFTP::SOURCE_LOCAL_FILE)) {
+            throw new RuntimeException("upload of $relative failed.");
+        }
+    }
+    ps_vlog(sprintf('uploaded %d file(s), %s, to %s', count($files), publish_size($size), $remote));
+    [$output, $exit] = publish_demo_run($ssh, $tools, 'apply ' . escapeshellarg($remote) . ' ' . escapeshellarg($note));
+    $ssh->delete($remote, true);
+    if ($exit !== 0 || preg_match('/^APPLY-OK$/m', $output) !== 1) {
+        throw new RuntimeException('apply failed on the server (exit ' . $exit . '): see the server output above.');
+    }
+    echo "Demo shop: \"$note\" applied, new snapshot.\n";
+
+    return $noSnapshot ? 0 : publish_after_deploy($ctx, $note);
 }
 
 /**
