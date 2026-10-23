@@ -4,7 +4,7 @@
  *
  * Every check that passes records a stamp in <repo>/.cache/dod/<step>.json with a
  * fingerprint of the module source. When the source changes afterwards, the stamp
- * is stale. The Stop hook of the PrestaShopHeaven project (.claude/hooks/) uses
+ * is stale. The Stop hook of the PrestaHaven project (.claude/hooks/) uses
  * `status` to see whether all required checks ran on the current code.
  *
  * Used through `vendor/bin/ps-module status|skip|fingerprint` and by the tools that
@@ -14,7 +14,7 @@
  *        check, validate-src, validate-zip, shop-tests (if testing.json exists),
  *        validator-api (if PRESTASHOP_VALIDATOR_API_KEY is configured).
  *
- * Also used by the Stop hook of the PrestaShopHeaven project (.claude/hooks/).
+ * Also used by the Stop hook of the PrestaHaven project (.claude/hooks/).
  */
 
 declare(strict_types=1);

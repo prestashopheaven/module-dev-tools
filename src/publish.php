@@ -7,7 +7,7 @@
  * It is also available through the world-wide-web at this URL:
  * https://opensource.org/licenses/AFL-3.0
  *
- * @author    George van Engers | PrestaShopHeaven.com
+ * @author    George van Engers | PrestaHaven.com
  * @copyright Since 2026 George van Engers
  * @license   https://opensource.org/licenses/AFL-3.0 Academic Free License version 3.0
  */
@@ -1752,7 +1752,7 @@ function publish_demo_install_prestashop(array $ctx, string $version, bool $dryR
         '--base_uri=' . $base, '--domain=' . $domain, '--ssl=' . (str_starts_with($url, 'https://') ? '1' : '0'), '--rewrite=1',
         '--db_server=' . $db['host'] . ($db['port'] !== '' ? ':' . $db['port'] : ''), '--db_name=' . $db['name'],
         '--db_user=' . $db['user'], '--db_password=' . $db['password'], '--db_create=0', '--db_clear=1', '--prefix=ps_',
-        '--name=' . (publish_env($ctx, 'DEMO_SITE_SHOP_NAME') ?: 'PrestaShopHeaven demo'),
+        '--name=' . (publish_env($ctx, 'DEMO_SITE_SHOP_NAME') ?: 'PrestaHaven demo'),
         '--country=' . (publish_env($ctx, 'DEMO_SITE_COUNTRY') ?: 'nl'), '--firstname=Demo', '--lastname=Demo',
         '--email=' . (publish_env($ctx, 'DEMO_SITE_EMAIL') ?: 'demo@demo.com'),
         '--password=' . (publish_env($ctx, 'DEMO_SITE_PASSWORD') ?: 'demodemo'), '--newsletter=0', '--send_email=0',

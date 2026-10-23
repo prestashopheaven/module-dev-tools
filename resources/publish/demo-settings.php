@@ -7,7 +7,7 @@
  * It is also available through the world-wide-web at this URL:
  * https://opensource.org/licenses/AFL-3.0
  *
- * @author    George van Engers | PrestaShopHeaven.com
+ * @author    George van Engers | PrestaHaven.com
  * @copyright Since 2026 George van Engers
  * @license   https://opensource.org/licenses/AFL-3.0 Academic Free License version 3.0
  */
@@ -28,7 +28,7 @@
  *   workspace's branding/): the shop logo (PS_LOGO, PNG), the logo of the back-office header (SVG, by a CSS rule in
  *   the admin theme) and of the login page (img/prestashop@2x.png);
  * - the intro page <intro-path>/index.html in the brand colours with the brand logo: links to the shop and to the back
- *   office, and the PrestaShopHeaven modules in the shop with their version and a link to their docs site
+ *   office, and the PrestaHaven modules in the shop with their version and a link to their docs site
  *   (<docs-url>/<module>/index.php; without a docs URL the shop's own domain, when <module>/index.php is in the shop root).
  * With DEMO_SETTINGS_ONLY=intro (demo-site.sh deploy) only the intro page is written; the rest stays as it is.
  * Prints "DEMO-SETTINGS-OK <admin folder>".
@@ -142,7 +142,7 @@ if (!$introOnly) {
     $employee = $id > 0 ? new Employee($id) : new Employee();
     $employee->email = $email;
     $employee->firstname = 'Demo';
-    $employee->lastname = 'PrestaShopHeaven';
+    $employee->lastname = 'PrestaHaven';
     $employee->passwd = $hashing->hash($password);
     $employee->id_profile = _PS_ADMIN_PROFILE_;
     $employee->id_lang = (int) Configuration::get('PS_LANG_DEFAULT');
@@ -257,7 +257,7 @@ foreach ($modules as $module) {
 }
 demo_vlog('intro docs links: ' . ($linked !== [] ? implode(', ', $linked) . " at $docsBase/<module>/index.php" : 'none (no <module>/index.php in the shop root and no docs URL)'));
 if ($items === '') {
-    $items = "<li>No PrestaShopHeaven modules installed yet.</li>\n";
+    $items = "<li>No PrestaHaven modules installed yet.</li>\n";
 }
 $dir = _PS_ROOT_DIR_ . '/' . $introPath;
 if (!is_dir($dir) && !mkdir($dir, 0775, true)) {
@@ -275,7 +275,7 @@ $html = '<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>PrestaShopHeaven demo shop</title>
+<title>PrestaHaven demo shop</title>
 <style>
   :root { --bg: #fdf6fa; --card: #fff; --text: #3c3c3b; --muted: #6b6470; --primary: #e31b87; --secondary: #802982; --line: #efd9e7; }
   * { box-sizing: border-box; }
@@ -302,7 +302,7 @@ $html = '<!doctype html>
 </style>
 </head>
 <body>
-<header><div>' . ($logo !== '' ? '<img class="logo" src="' . $e($logo) . '" alt="PrestaShopHeaven">' : '') . '<div><h1>PrestaShopHeaven demo shop</h1><p>Try every PrestaShopHeaven module in a real PrestaShop ' . $e(_PS_VERSION_) . ' shop, in the shop and in the back office.</p></div></div></header>
+<header><div>' . ($logo !== '' ? '<img class="logo" src="' . $e($logo) . '" alt="PrestaHaven">' : '') . '<div><h1>PrestaHaven demo shop</h1><p>Try every PrestaHaven module in a real PrestaShop ' . $e(_PS_VERSION_) . ' shop, in the shop and in the back office.</p></div></div></header>
 <main>
   <p class="buttons"><a href="' . $e($base . '/') . '">Open the shop</a> <a class="admin" href="' . $e($login) . '">Open the back office</a></p>
   <p class="note">Back office login (already filled in, just click "Log in"): <code>' . $e($email) . '</code> / <code>' . $e($password) . '</code>.

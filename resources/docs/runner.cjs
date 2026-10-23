@@ -6,7 +6,7 @@
  * It is also available through the world-wide-web at this URL:
  * https://opensource.org/licenses/AFL-3.0
  *
- * @author    George van Engers | PrestaShopHeaven.com
+ * @author    George van Engers | PrestaHaven.com
  * @copyright Since 2026 George van Engers
  * @license   https://opensource.org/licenses/AFL-3.0 Academic Free License version 3.0
  */

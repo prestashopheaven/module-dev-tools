@@ -7,7 +7,7 @@
  * It is also available through the world-wide-web at this URL:
  * https://opensource.org/licenses/AFL-3.0
  *
- * @author    George van Engers | PrestaShopHeaven.com
+ * @author    George van Engers | PrestaHaven.com
  * @copyright Since 2026 George van Engers
  * @license   https://opensource.org/licenses/AFL-3.0 Academic Free License version 3.0
  */
@@ -573,7 +573,7 @@ function docs_validate_marketing_common(array $ctx, array $marketing, callable $
 
     $required = (string) ($multistore['required'] ?? 'Fully');
     if (($marketing['multistore'] ?? null) !== $required) {
-        $add('error', '*', $file, "marketing.multistore must be \"$required\": PrestaShopHeaven modules are always fully multistore compatible");
+        $add('error', '*', $file, "marketing.multistore must be \"$required\": PrestaHaven modules are always fully multistore compatible");
     }
 
     // MKT-07: several logo suggestions in the brand colours, and a prompt for a new logo with those colours.

@@ -1,6 +1,6 @@
 name: Release
 
-# Same convention as the PrestaShopHeaven modules: a push to main/master with the commit
+# Same convention as the PrestaHaven modules: a push to main/master with the commit
 # message "Release X.Y.Z - <notes>" releases version X.Y.Z:
 #   1. the version in composer.json must be X.Y.Z and tag vX.Y.Z must not exist yet
 #   2. all checks must pass (ci.yml)

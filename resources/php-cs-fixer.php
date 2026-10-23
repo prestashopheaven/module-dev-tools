@@ -7,13 +7,13 @@
  * It is also available through the world-wide-web at this URL:
  * https://opensource.org/licenses/AFL-3.0
  *
- * @author    George van Engers | PrestaShopHeaven.com
+ * @author    George van Engers | PrestaHaven.com
  * @copyright Since 2026 George van Engers
  * @license   https://opensource.org/licenses/AFL-3.0 Academic Free License version 3.0
  */
 
 /*
- * Shared php-cs-fixer configuration for PrestaShopHeaven modules and libraries.
+ * Shared php-cs-fixer configuration for PrestaHaven modules and libraries.
  * Use it in .php-cs-fixer.dist.php:
  *
  *   $factory = require __DIR__ . '/vendor/prestashopheaven/module-dev-tools/resources/php-cs-fixer.php';

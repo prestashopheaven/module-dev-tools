@@ -1,6 +1,6 @@
 # prestashopheaven/module-dev-tools
 
-Ontwikkeltools voor PrestaShopHeaven-modules. Installeer als `require-dev`; alles loopt via
+Ontwikkeltools voor PrestaHaven-modules. Installeer als `require-dev`; alles loopt via
 één commando: `vendor/bin/ps-module` (in composer-scripts gewoon `ps-module`).
 
 | Commando | Wat |

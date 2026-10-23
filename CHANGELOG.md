@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.20.1] - 2026-10-23
+
+### Gewijzigd
+- Onderhoud: teksten van de introductiepagina van de demo en de standaardnaam van de demowinkel bijgewerkt, metadata
+  en bestandsheaders bijgewerkt.
+
 ## [1.20.0] - 2026-10-23
 
 ### Toegevoegd

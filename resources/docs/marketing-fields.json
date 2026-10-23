@@ -57,7 +57,7 @@
       "scope": "common",
       "type": "multistore",
       "options": "addons/multistore-options.json",
-      "hint": "Always \"Fully\": PrestaShopHeaven modules must work in every shop of a multistore."
+      "hint": "Always \"Fully\": PrestaHaven modules must work in every shop of a multistore."
     },
     "installation_instructions": {
       "question": "Detailed installation instructions",

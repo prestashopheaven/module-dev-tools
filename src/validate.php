@@ -271,7 +271,7 @@ function checkIdentity(string $dir, string $name, array $rules, Report $r): void
     if (preg_match('/[\'"]max[\'"]\s*=>\s*_PS_VERSION_/', $code)) {
         $r->error('compatibility', "ps_versions_compliancy 'max' must be a literal version such as '9.99.99', never _PS_VERSION_ (MOD-02).", "$name.php");
     }
-    // PrestaShopHeaven modules are always fully multistore compatible (MS-01).
+    // PrestaHaven modules are always fully multistore compatible (MS-01).
     if (!preg_match('/\$this->multistoreCompatibility\s*=\s*self::MULTISTORE_COMPATIBILITY_YES\s*;/', $code)) {
         $r->error('multistore', 'The constructor must set $this->multistoreCompatibility = self::MULTISTORE_COMPATIBILITY_YES; (MS-01).', "$name.php");
     }

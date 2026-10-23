@@ -8,13 +8,13 @@
  * It is also available through the world-wide-web at this URL:
  * https://opensource.org/licenses/AFL-3.0
  *
- * @author    George van Engers | PrestaShopHeaven.com
+ * @author    George van Engers | PrestaHaven.com
  * @copyright Since 2026 George van Engers
  * @license   https://opensource.org/licenses/AFL-3.0 Academic Free License version 3.0
  */
 
 /*
- * ps-module: development commands for PrestaShopHeaven modules.
+ * ps-module: development commands for PrestaHaven modules.
  * Run inside the module directory (composer scripts do that automatically).
  *
  *   ps-module verify                 the full definition of done, in order, stops at the first failure:
