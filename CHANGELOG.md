@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.23.0] - 2026-10-24
 
 ### Toegevoegd
 - `ps-module sign <zip>`: ondertekent een release-zip voor de update-server (`<zip>.sig`, ed25519, sleutel uit
