@@ -538,9 +538,9 @@ function docs_validate_marketing_common(array $ctx, array $marketing, callable $
     $min = (float) $fields['price']['min'];
     $max = (float) $fields['price']['max'];
     if (!is_int($price) && !is_float($price)) {
-        $add('error', '*', $file, "marketing.price must be a number between $min and $max");
-    } elseif ($price < $min || $price > $max) {
-        $add('error', '*', $file, "marketing.price $price is outside $min - $max");
+        $add('error', '*', $file, "marketing.price must be 0 (a free module) or a number between $min and $max");
+    } elseif ($price != 0 && ($price < $min || $price > $max)) {
+        $add('error', '*', $file, "marketing.price $price is outside $min - $max (0 = a free module)");
     } elseif (abs($price * 100 - round($price * 100)) > 1e-6) {
         $add('error', '*', $file, "marketing.price $price has more than two decimals");
     }

@@ -30,7 +30,7 @@
       "type": "price",
       "min": 49.99,
       "max": 4999.99,
-      "hint": "A number between 49.99 and 4999.99, compared with similar modules on Addons."
+      "hint": "A number between 49.99 and 4999.99, compared with similar modules on Addons; 0 for a free module (not sold on Addons)."
     },
     "features": {
       "question": "What features are included in your module?",

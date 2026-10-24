@@ -1033,7 +1033,8 @@ function docs_marketing_text(array $v): string
 {
     $value = $v['value'];
     if ($v['type'] === 'price' && (is_int($value) || is_float($value))) {
-        return number_format((float) $value, 2, '.', '');
+        // 0 = a free module (sold or given away outside Addons, e.g. the PrestaHaven Updater).
+        return (float) $value == 0.0 ? 'Free' : number_format((float) $value, 2, '.', '');
     }
     if (is_array($value)) {
         return $value === [] ? '-' : implode("\n", array_map(static fn ($item): string => '- ' . $item, $value));
@@ -1053,7 +1054,9 @@ function docs_marketing_value_html(array $v, ?array $logo, string $dir): string
     $value = $v['value'];
     $noImages = static fn (): ?array => null;
     if ($v['type'] === 'price') {
-        return '<p class="big">€ ' . docs_e(docs_marketing_text($v)) . '</p>';
+        $text = docs_marketing_text($v);
+
+        return '<p class="big">' . ($text === 'Free' ? '' : '€ ') . docs_e($text) . '</p>';
     }
     if (is_array($value)) {
         if ($value === []) {
