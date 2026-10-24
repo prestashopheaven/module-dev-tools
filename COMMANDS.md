@@ -398,11 +398,41 @@ Recorded steps: `<repo>/.cache/publish/<version>.json`.
 |---|---|
 | `status [--remote] [--json]` | Default. The state of the repo and the next question to ask. `--remote`: also look at the remote. |
 | `start <slug> [--fix]` | New branch `feature/<slug>` (`fix/<slug>` with `--fix`); keeps uncommitted work. The slug comes first. |
-| `pr` | Pushes the branch and opens a pull request (`gh`) or GitLab merge request. |
+| `pr [--release=X.Y.Z --notes="…" [--publish …]]` | Pushes the branch and opens a pull request (`gh`) or GitLab merge request. `--release`: title `Release X.Y.Z - <notes>`. `--publish`: the PR body gets the `Update-*` trailers for the update server (accept automatically; PrestaShop lines from `testing.json`, PHP from `module.spec.json` `php_min` up to 8.5). Overrides: `--no-accept`, `--channel=beta`, `--rollout=N`, `--min-updater=X.Y.Z`, `--prestashop=8.1,9.2`, `--php=8.1-8.5`. |
+| `merge` | Squash-merges the open PR (GitHub) with its title as subject and the `Update-*` trailers from the PR body as the commit body, so the release workflow signs with them. |
 | `finish` | After the merge: back to the default branch, pull, delete the branch. |
 | `later` | The user said "not now": don't ask again until the state changes. |
 
 Exit 2 when not in a git repository or with an unknown command.
+
+## Update server (`sign`, `update-keys`, `update`)
+
+Release signing for the PrestaHaven update server (`update-system/PLAN.md` in the workspace). The server and the
+updater module only accept a zip whose `<module>.zip.sig` verifies with a trusted public key.
+
+| Command | What it does |
+|---|---|
+| `ps-module sign <zip> [--trailers-from=<ref>] [--publish=accept\|pending] [--prestashop=…] [--php=…] [--channel=stable\|beta] [--rollout=N] [--min-updater=X.Y.Z] [--out=<file>]` | Writes `<zip>.sig`: a signed statement about exactly this zip (module and version read from it, sha256, size) plus the publish instructions. `--trailers-from=HEAD` reads the `Update-*` trailers of that commit (the release workflow); options win over trailers. Lines: `8.1, 9.2` or ranges within one major (`8.1-8.5`). `accept` needs PrestaShop and PHP lines. The key comes from `UPDATE_SIGNING_KEY` (environment, else the nearest `.env`); it is never printed. |
+| `ps-module update-keys generate [--force] [--org=prestashopheaven] [--no-github]` | Makes the ed25519 key pair once: the private key goes into the workspace `.env` (`UPDATE_SIGNING_KEY`) and into the GitHub organization secret `UPDATE_SIGNING_KEY` (through `gh`, on stdin). Prints only the public key and its id. Refuses to replace an existing key without `--force` (rotate only after the new public key is trusted on the server). |
+| `ps-module update-keys public` | The public key and key id of `UPDATE_SIGNING_KEY`. |
+| `ps-module update-keys push-secret [--org=…]` | Copies the existing `UPDATE_SIGNING_KEY` from `.env` into the GitHub organization secret (after `gh auth refresh -h github.com -s admin:org`). |
+| `ps-module update backfill-signatures [--repo=owner/name ...] [--dry-run]` | Signs every existing GitHub release with a `<module>.zip` but no `.sig` (publish: pending) and uploads the `.sig` to that release. Without `--repo`: every module repository of the workspace. |
+
+Release commit trailers (`ps-module git pr --release X.Y.Z --publish` writes them, `ps-module git merge` keeps them in
+the squash commit):
+
+```
+Release 1.2.3 - Fix the price check
+
+Update-Publish: accept
+Update-PrestaShop: 8.1, 8.2, 9.0, 9.1, 9.2
+Update-PHP: 8.1-8.5
+Update-Channel: stable
+Update-Rollout: 100
+```
+
+Signature file (JSON): `{"format": 1, "key_id": "<16 hex>", "statement": "<base64 statement JSON>", "signature": "<base64 ed25519>"}`;
+the signature covers the raw statement bytes.
 
 ## Other
 
