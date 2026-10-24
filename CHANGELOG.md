@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.21.1] - 2026-10-24
+
+### Opgelost
+- `docs build`: een screenshot van een XML-pagina (een sitemap, een feed) faalde met "page.addStyleTag: Cannot read
+  properties of null". De runner kijkt nu naar het Content-Type van de pagina: een niet-HTML-pagina krijgt geen
+  verbergstijl en geen `page.evaluate()` (die komt in Chromes XML-weergave nooit terug) en wordt gefotografeerd zoals de
+  browser hem toont. `click`, `wait_for`, `selector` en `scroll_to` op zo'n pagina geven een duidelijke fout in plaats
+  van te blijven hangen. Gevonden in `heavenlangimages` (afbeeldingssitemap per taal); met de hand getest in de
+  docs-image tegen een XML- en een HTML-pagina.
+
 ## [1.21.0] - 2026-10-24
 
 ### Toegevoegd

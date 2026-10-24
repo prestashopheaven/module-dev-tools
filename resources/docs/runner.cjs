@@ -216,7 +216,16 @@ async function screenshots(browser, task, results) {
                 if (shot.area === 'bo' && /controller=AdminLogin|id="login_form"|name="passwd"/.test(page.url() + html) && !/_token=/.test(page.url())) {
                     throw new Error('Not logged in on ' + result.url);
                 }
-                await page.addStyleTag({ content: hide.join(',') + '{display:none !important;visibility:hidden !important}' });
+                // An XML page (a sitemap, a feed) is shown in Chrome's XML view: it has no head for a style tag
+                // (addStyleTag() fails) and page.evaluate() never returns there. Screenshot it as it is.
+                const contentType = response ? response.headers()['content-type'] || '' : '';
+                const isHtml = contentType === '' || /html/i.test(contentType);
+                if (!isHtml && ((shot.click || []).length > 0 || shot.wait_for || shot.selector || shot.scroll_to)) {
+                    throw new Error('click, wait_for, selector and scroll_to need an HTML page; ' + result.url + ' is ' + contentType);
+                }
+                if (isHtml) {
+                    await page.addStyleTag({ content: hide.join(',') + '{display:none !important;visibility:hidden !important}' });
+                }
                 for (const selector of shot.click || []) {
                     await page.locator(selector).first().click({ timeout: 15000 });
                     await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
@@ -224,7 +233,9 @@ async function screenshots(browser, task, results) {
                 if (shot.wait_for) {
                     await page.locator(shot.wait_for).first().waitFor({ state: 'visible', timeout: 30000 });
                 }
-                await page.evaluate(() => document.fonts.ready);
+                if (isHtml) {
+                    await page.evaluate(() => document.fonts.ready);
+                }
                 await page.waitForTimeout(shot.delay || 600);
                 fs.mkdirSync(path.dirname(shot.out), { recursive: true });
                 if (shot.selector) {
@@ -259,7 +270,7 @@ async function screenshots(browser, task, results) {
                             await target.evaluate((el, off) => window.scrollTo(0, Math.max(0, el.getBoundingClientRect().top + window.scrollY - off)), shot.scroll_offset);
                         }
                         await page.waitForTimeout(300);
-                    } else {
+                    } else if (isHtml) {
                         await page.evaluate(() => window.scrollTo(0, 0));
                     }
                     await page.screenshot({ path: shot.out, fullPage: !!shot.full_page });
