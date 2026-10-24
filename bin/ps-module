@@ -50,7 +50,7 @@
  *                                    the PR, and merge squashes with them in the release commit
  *   ps-module sign <zip> [options]   <zip>.sig for the update server (UPDATE_SIGNING_KEY); --trailers-from=HEAD reads the
  *                                    Update-* trailers of the release commit (the release workflow)
- *   ps-module update-keys generate | public
+ *   ps-module update-keys generate | public | push-secret
  *                                    the release signing key pair: private key into .env and the GitHub org secret
  *   ps-module update backfill-signatures [--repo=owner/name] [--dry-run]
  *                                    sign existing GitHub releases that have no <module>.zip.sig yet

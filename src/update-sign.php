@@ -350,8 +350,13 @@ function update_keys_cli(array $args, string $workspace): int
 
             return 0;
         }
+        if ($sub === 'push-secret') {
+            update_push_org_secret(base64_encode(update_signing_key()), $org);
+
+            return 0;
+        }
         if ($sub !== 'generate') {
-            fwrite(STDERR, "ps-module update-keys generate [--force] [--org=prestashopheaven] [--no-github] | public\n");
+            fwrite(STDERR, "ps-module update-keys generate [--force] [--org=prestashopheaven] [--no-github] | public | push-secret [--org=…]\n");
 
             return 2;
         }
@@ -373,18 +378,7 @@ function update_keys_cli(array $args, string $workspace): int
         echo "ps-module update-keys: private key written to $envFile (UPDATE_SIGNING_KEY).\n";
 
         if (!$noGithub) {
-            $process = proc_open(['gh', 'secret', 'set', 'UPDATE_SIGNING_KEY', '--org', $org, '--visibility', 'all'], [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
-            if (!is_resource($process)) {
-                throw new RuntimeException('Cannot run gh to set the organization secret.');
-            }
-            fwrite($pipes[0], $secret);
-            fclose($pipes[0]);
-            $out = stream_get_contents($pipes[1]) . stream_get_contents($pipes[2]);
-            $code = proc_close($process);
-            if ($code !== 0) {
-                throw new RuntimeException("gh could not set the organization secret (the key IS in .env; set it by hand or run again with --force): " . trim(str_replace($secret, '***', $out)));
-            }
-            echo "ps-module update-keys: organization secret UPDATE_SIGNING_KEY set for $org (all repositories).\n";
+            update_push_org_secret($secret, $org);
         }
         sodium_memzero($keyPair);
         echo "\npublic key: " . base64_encode($public) . "\nkey id:     " . update_key_id($public) . "\n\n"
@@ -397,6 +391,25 @@ function update_keys_cli(array $args, string $workspace): int
 
         return 1;
     }
+}
+
+/**
+ * Puts the signing key into the GitHub organization secret UPDATE_SIGNING_KEY (all repositories) through gh, on stdin;
+ * the key never appears on a command line or in output. Needs the admin:org scope (gh auth refresh -s admin:org).
+ */
+function update_push_org_secret(string $secretBase64, string $org): void
+{
+    $process = proc_open(['gh', 'secret', 'set', 'UPDATE_SIGNING_KEY', '--org', $org, '--visibility', 'all'], [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+    if (!is_resource($process)) {
+        throw new RuntimeException('Cannot run gh to set the organization secret.');
+    }
+    fwrite($pipes[0], $secretBase64);
+    fclose($pipes[0]);
+    $out = stream_get_contents($pipes[1]) . stream_get_contents($pipes[2]);
+    if (proc_close($process) !== 0) {
+        throw new RuntimeException("gh could not set the organization secret (the key is in .env; after gh auth refresh -h github.com -s admin:org run: ps-module update-keys push-secret): " . trim(str_replace($secretBase64, '***', (string) $out)));
+    }
+    echo "ps-module update-keys: organization secret UPDATE_SIGNING_KEY set for $org (all repositories).\n";
 }
 
 /**
