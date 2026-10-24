@@ -25,7 +25,10 @@
  *     HTTP 500 after the fields were saved (PrestaShop 8.1);
  *   - an uploaded image becomes the cover when the product has none; a deleted cover leaves no cover; with state
  *     delete_500 a DELETE of an image deletes it and then answers HTTP 500 without a body (PrestaShop 8.1).
- * Failures on request: state fail.upload_at (the n-th upload of the run fails), fail.put (every PUT is refused).
+ * With state image_languages_module the shop has the resource heavenlangimages_images (module Language-Specific Product
+ * Images): a PUT stores the languages and captions of an image in state image_languages.
+ * Failures on request: state fail.upload_at (the n-th upload of the run fails), fail.put (every PUT is refused),
+ * fail.image_languages_at (the n-th PUT of heavenlangimages_images is refused).
  * Every request is logged in state log as "METHOD path".
  */
 
@@ -56,7 +59,12 @@ function fake_ws_route(array &$state, string $method, array $segments): void
     if ($resource === '' && $method === 'GET') {
         // The resource list with the permissions of the key (state denied: ["images delete", ...]).
         $xml = '<prestashop xmlns:xlink="http://www.w3.org/1999/xlink"><api shopName="Fake">';
-        foreach (['languages', 'products', 'images', 'product_features', 'product_feature_values'] as $name) {
+        $resources = ['languages', 'products', 'images', 'product_features', 'product_feature_values'];
+        if (!empty($state['image_languages_module'])) {
+            // The module Language-Specific Product Images is installed (state image_languages_module).
+            $resources[] = 'heavenlangimages_images';
+        }
+        foreach ($resources as $name) {
             $xml .= "<$name";
             foreach (['get', 'put', 'post', 'patch', 'delete', 'head'] as $verb) {
                 $xml .= " $verb=\"" . (in_array("$name $verb", $state['denied'] ?? [], true) ? 'false' : 'true') . '"';
@@ -137,6 +145,29 @@ function fake_ws_route(array &$state, string $method, array $segments): void
 
             return;
         }
+    }
+    if ($resource === 'heavenlangimages_images' && $method === 'PUT' && !empty($state['image_languages_module'])) {
+        // The resource of heavenlangimages: languages by iso code (none = every language) and captions per iso code.
+        $imageId = (string) (int) ($segments[1] ?? 0);
+        $state['image_put'] = ($state['image_put'] ?? 0) + 1;
+        if (!isset($state['images'][$imageId]) || ($state['fail']['image_languages_at'] ?? 0) === $state['image_put']) {
+            fake_ws_error(400, 'The image does not exist.');
+
+            return;
+        }
+        $xml = simplexml_load_string((string) file_get_contents('php://input'));
+        $languages = [];
+        foreach ($xml->heavenlangimages_image->languages->language ?? [] as $language) {
+            $languages[] = (string) $language->iso_code;
+        }
+        $legends = [];
+        foreach ($xml->heavenlangimages_image->legends->legend ?? [] as $legend) {
+            $legends[(string) $legend->iso_code] = (string) $legend->value;
+        }
+        $state['image_languages'][$imageId] = ['languages' => $languages, 'legends' => $legends];
+        fake_ws_xml('<prestashop><heavenlangimages_image><id>' . $imageId . '</id></heavenlangimages_image></prestashop>');
+
+        return;
     }
     if ($resource === 'product_features' && $method === 'GET') {
         fake_ws_json(['product_features' => array_values($state['features'])]);

@@ -345,9 +345,17 @@ address in every version, and the server lets a CDN cache them for years. `publi
   - Before anything is written it checks that the key has `products` PUT and `images` POST + DELETE (exit 1 when not).
   - Prints per text field in how many languages it changes, the images and the manual steps (the zip, checking,
     activating), and records the step `shop`. `--dry-run` only reads from the shop and shows what would change.
+- **Images per language** (create and `--update`): when the shop has the module Language-Specific Product Images
+  (`heavenlangimages`, webservice resource `heavenlangimages_images` with GET + PUT for the key), every screenshot comes
+  as one frame per shop language: `docs/framed/<iso>/<id>.png` of the module language of that shop language, English
+  for a shop language without its own frame. After the upload each image gets its shop languages and its caption (the
+  frame title of `docs/content/<iso>/screenshots.json`; for the cover the product name, every language) through that
+  resource. A refused language PUT leaves that image for every language and is listed as a manual step. Without the
+  resource (or without the permission) the images are the cover and the English frames for every language, as before;
+  the plan says why.
 - **Webservice key** (Advanced Parameters > Webservice), permissions: `languages` GET; `products` GET + POST;
   `images` POST; `product_features` and `product_feature_values` GET + POST. `--update` also needs `products` PUT and
-  `images` DELETE.
+  `images` DELETE. Images per language: `heavenlangimages_images` GET + PUT.
 
 Options for all `publish` and `demo-site` commands:
 - `--env=<file>`: read the settings from this file first (e.g. `demo-site/local.env`). Server settings

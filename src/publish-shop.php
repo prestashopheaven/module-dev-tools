@@ -35,7 +35,11 @@
  *   - meta title/description, friendly URL (Latin scripts transliterated; other scripts get the English one)
  *   - price              docs.json > marketing > price, without tax
  *   - images             docs/marketing/cover-1000.png first (the cover), then docs/framed/en/<id>.png in the order
- *                        of docs.json > screenshots
+ *                        of docs.json > screenshots. When the shop has the module Language-Specific Product Images
+ *                        (webservice resource heavenlangimages_images, GET + PUT for the key), every screenshot comes
+ *                        as one frame per shop language (docs/framed/<iso>/<id>.png, English for a language without
+ *                        its own), and each image gets its languages and its caption (the frame title, for the cover
+ *                        the product name) through that resource
  *   - features           resources/publish/shop-features.json (Multistore: Yes), reused when the shop has them
  *   - reference          the technical module name: how the command finds the product again
  * Every language installed in the shop gets its texts; a shop language the module has no texts for gets English.
@@ -45,7 +49,8 @@
  * SALES_SHOP_WEBSERVICE_KEY (Advanced Parameters > Webservice; permissions below), optional
  * SALES_SHOP_CATEGORY_ID (default 2, Home) and SALES_SHOP_TAX_RULES_GROUP_ID (default: none, set it by hand).
  * Webservice permissions: languages GET; products GET + POST; images POST; product_features and
- * product_feature_values GET + POST. --update also needs products PUT and images DELETE.
+ * product_feature_values GET + POST. --update also needs products PUT and images DELETE. Images per language also need
+ * heavenlangimages_images GET + PUT (without it every image is shown in every language).
  */
 
 declare(strict_types=1);
@@ -61,6 +66,12 @@ const PUBLISH_SHOP_PUT_SKIP = ['manufacturer_name', 'quantity', 'new', 'position
  * Product fields --update must leave as they are; compared before and after (associations: categories and stock).
  */
 const PUBLISH_SHOP_KEEP = ['active', 'reference', 'price', 'id_tax_rules_group', 'id_category_default', 'visibility', 'is_virtual', 'available_for_order', 'show_price', 'state'];
+
+/**
+ * The webservice resource of the module Language-Specific Product Images (heavenlangimages): sets the languages and the
+ * captions of a product image. When the sales shop has it, every shop language gets the frames in its own language.
+ */
+const PUBLISH_SHOP_IMAGE_LANGUAGES = 'heavenlangimages_images';
 
 /**
  * Creates the product of the module in the sales shop, inactive, with texts in every shop language, images and
@@ -100,7 +111,9 @@ function publish_cmd_shop(array $ctx, bool $dryRun, bool $force = false, bool $u
         return 0;
     }
     $fields = publish_shop_schema($ws);
-    publish_shop_print_plan($ctx, $plan, $languages, $category, $tax);
+    $perLanguage = publish_shop_can_set_image_languages($ws);
+    $set = publish_shop_image_set($ctx, $plan, $languages, $perLanguage);
+    publish_shop_print_plan($ctx, $plan, $languages, $category, $tax, publish_shop_describe_images($ctx, $set, $perLanguage));
     $sameName = publish_shop_find_by_name($ws, $plan['name']);
     if ($sameName !== []) {
         $list = implode(', ', array_map(static fn (array $p): string => "#{$p['id']} (reference '" . $p['reference'] . "', " . ($p['active'] ? 'active' : 'inactive') . ')', $sameName));
@@ -134,13 +147,27 @@ function publish_cmd_shop(array $ctx, bool $dryRun, bool $force = false, bool $u
     echo "Created product #$id \"{$plan['name'][$plan['source']]}\" (inactive).\n";
 
     $uploaded = 0;
-    foreach ($plan['images'] as $image) {
+    $done = [];
+    foreach ($set as $entry) {
+        $image = $entry['file'];
         try {
             publish_shop_ws($ws, 'POST', "images/products/$id", [], null, ['image' => new CURLFile($image, 'image/png', basename($image))]);
             ++$uploaded;
-            echo '  image ' . $uploaded . '/' . count($plan['images']) . ': ' . publish_shop_relative($ctx, $image) . ($uploaded === 1 && str_contains($image, '/docs/marketing/cover') ? ' (cover)' : '') . "\n";
+            $done[] = $entry;
+            echo '  image ' . $uploaded . '/' . count($set) . ': ' . publish_shop_relative($ctx, $image) . ($uploaded === 1 && str_contains($image, '/docs/marketing/cover') ? ' (cover)' : '')
+                . ($entry['languages'] === [] ? '' : ' (' . implode(' ', $entry['languages']) . ')') . "\n";
         } catch (RuntimeException $e) {
             fwrite(STDERR, 'ps-module publish shop: image ' . basename($image) . ' not uploaded: ' . publish_mask($e->getMessage()) . "\n");
+        }
+    }
+    $languageProblems = [];
+    if ($perLanguage && $done !== []) {
+        $imageIds = publish_shop_image_ids(publish_shop_product_doc($ws, $id));
+        sort($imageIds);
+        $languageProblems = publish_shop_set_image_languages($ws, $done, $imageIds);
+        echo '  languages and captions set for ' . (count($done) - count($languageProblems)) . '/' . count($done) . " image(s)\n";
+        foreach ($languageProblems as $problem) {
+            fwrite(STDERR, "ps-module publish shop: languages not set: $problem\n");
         }
     }
 
@@ -150,8 +177,11 @@ function publish_cmd_shop(array $ctx, bool $dryRun, bool $force = false, bool $u
         . (is_file($zip) ? ' (' . publish_size((int) filesize($zip)) . ', ' . date('Y-m-d H:i', (int) filemtime($zip)) . ')' : ' (not built yet: vendor/bin/ps-module build)') . "\n";
     echo '  2. Check price, tax rule' . ($tax === 0 ? ' (none set)' : '') . ", category, stock and the texts\n";
     echo "  3. Activate the product\n";
-    if ($uploaded < count($plan['images'])) {
-        echo '  ' . (count($plan['images']) - $uploaded) . " image(s) failed (see above): add them by hand\n";
+    if ($uploaded < count($set)) {
+        echo '  ' . (count($set) - $uploaded) . " image(s) failed (see above): add them by hand\n";
+    }
+    if ($languageProblems !== []) {
+        echo '  ' . count($languageProblems) . " image(s) without their languages (see above): set them in the Images section of the product\n";
     }
     publish_record($ctx, 'shop', "product #$id (inactive), $uploaded image(s); zip by hand");
     echo "Recorded step 'shop' for {$ctx['version']}.\n";
@@ -203,12 +233,14 @@ function publish_shop_update(array $ws, array $ctx, array $plan, array $language
     $oldImages = publish_shop_image_ids($before);
     $multilang = publish_shop_multilang($plan, $languages);
     $skip = array_values(array_unique(array_merge(PUBLISH_SHOP_PUT_SKIP, publish_shop_read_only_fields($ws))));
+    $perLanguage = publish_shop_can_set_image_languages($ws);
+    $set = publish_shop_image_set($ctx, $plan, $languages, $perLanguage);
 
     echo "Update of sales shop product #$id for {$ctx['module']} {$ctx['version']} (" . ($existing['active'] ? 'active' : 'inactive') . ", stays so):\n";
     foreach (publish_shop_text_changes($before, $multilang) as $field => $changed) {
         printf("  %-17s %s\n", $field, $changed === 0 ? 'unchanged' : "new text in $changed of " . count($languages) . ' language(s)');
     }
-    printf("  %-17s %s\n", 'images', count($plan['images']) . ' new (first = cover): ' . implode(', ', array_map(static fn (string $f): string => publish_shop_relative($ctx, $f), $plan['images'])));
+    printf("  %-17s %s\n", 'images', 'new: ' . publish_shop_describe_images($ctx, $set, $perLanguage));
     printf("  %-17s %s\n", '', $oldImages === [] ? 'the product has no images yet' : 'replace the ' . count($oldImages) . ' current one(s): #' . implode(' #', $oldImages));
     printf("  %-17s %s\n", 'features', implode(', ', array_map(static fn (array $f): string => ($f['name']['en'] ?? '?') . ': ' . ($f['value']['en'] ?? '?'), $plan['features'])) . ' (added when missing)');
     printf("  %-17s %s\n", 'kept as they are', 'price, tax rule, categories, active state, stock, virtual product file, visibility, reference');
@@ -224,15 +256,17 @@ function publish_shop_update(array $ws, array $ctx, array $plan, array $language
     $features = publish_shop_features($ws, $plan['features'], $languages);
 
     // 1. The new images first: until the old ones are gone the product keeps its pictures and its cover.
-    $total = count($plan['images']);
-    foreach ($plan['images'] as $n => $image) {
+    $total = count($set);
+    foreach ($set as $n => $entry) {
+        $image = $entry['file'];
         try {
             publish_shop_ws($ws, 'POST', "images/products/$id", [], null, ['image' => new CURLFile($image, 'image/png', basename($image))]);
         } catch (RuntimeException $e) {
             $removed = publish_shop_remove_new_images($ws, $id, $oldImages);
             throw new RuntimeException('image ' . basename($image) . ' not uploaded (' . $e->getMessage() . "); the $removed image(s) uploaded before it were removed again. Product #$id is unchanged.");
         }
-        echo '  image ' . ($n + 1) . "/$total uploaded: " . publish_shop_relative($ctx, $image) . ($n === 0 ? ' (the cover)' : '') . "\n";
+        echo '  image ' . ($n + 1) . "/$total uploaded: " . publish_shop_relative($ctx, $image) . ($n === 0 ? ' (the cover)' : '')
+            . ($entry['languages'] === [] ? '' : ' (' . implode(' ', $entry['languages']) . ')') . "\n";
     }
 
     // 2. Texts and features, in a PUT of the full product as the shop has it now. The cover is left out here: the shop
@@ -259,6 +293,17 @@ function publish_shop_update(array $ws, array $ctx, array $plan, array $language
     }
     if ($left !== []) {
         fwrite(STDERR, 'ps-module publish shop: old image(s) #' . implode(' #', $left) . " not removed.\n");
+    }
+
+    // The languages and captions of the new images (heavenlangimages_images); a failure leaves an image for every
+    // language, listed as a manual step.
+    $languageProblems = [];
+    if ($perLanguage && $newImages !== []) {
+        $languageProblems = publish_shop_set_image_languages($ws, $set, $newImages);
+        echo '  languages and captions set for ' . (count($set) - count($languageProblems)) . '/' . count($set) . " image(s)\n";
+        foreach ($languageProblems as $problem) {
+            fwrite(STDERR, "ps-module publish shop: languages not set: $problem\n");
+        }
     }
 
     // 4. The first new image as the cover (the old cover is gone with the old images, so no shop keeps it), in a
@@ -295,6 +340,9 @@ function publish_shop_update(array $ws, array $ctx, array $plan, array $language
     echo '  3. ' . ($existing['active'] ? 'The product is active: deactivate it while the zip is not in yet' : 'Activate the product when it is ready (it stays inactive)') . "\n";
     if ($left !== []) {
         echo '  4. Remove the old image(s) #' . implode(' #', $left) . " (see above)\n";
+    }
+    if ($languageProblems !== []) {
+        echo '  ' . ($left !== [] ? '5' : '4') . '. ' . count($languageProblems) . " image(s) without their languages (see above): set them in the Images section of the product\n";
     }
     publish_record($ctx, 'shop', "product #$id updated: texts, $total image(s); zip by hand");
     echo "Recorded step 'shop' for {$ctx['version']}.\n";
@@ -758,6 +806,175 @@ function publish_shop_plan(array $ctx): array
 }
 
 /**
+ * Whether the shop can give every image its own languages: it has the webservice resource heavenlangimages_images of
+ * the module Language-Specific Product Images (heavenlangimages, 1.0.0+) and the key may GET and PUT it. False when the
+ * resource list cannot be read.
+ *
+ * @param array{api: string, key: string} $ws
+ */
+function publish_shop_can_set_image_languages(array $ws): bool
+{
+    try {
+        $raw = publish_shop_ws($ws, 'GET', '', ['output_format' => 'XML'])['raw'];
+    } catch (RuntimeException $e) {
+        ps_vlog('webservice resource list not read (' . $e->getMessage() . '): images for all languages');
+
+        return false;
+    }
+    $doc = new DOMDocument();
+    $previous = libxml_use_internal_errors(true);
+    $loaded = $raw !== '' && $doc->loadXML($raw, LIBXML_NONET);
+    libxml_use_internal_errors($previous);
+    $api = $loaded && $doc->documentElement !== null ? publish_shop_child($doc->documentElement, 'api') : null;
+    $node = $api === null ? null : publish_shop_child($api, PUBLISH_SHOP_IMAGE_LANGUAGES);
+
+    return $node !== null && $node->getAttribute('get') === 'true' && $node->getAttribute('put') === 'true';
+}
+
+/**
+ * The images to upload, in upload order, each with the shop languages that show it ([] = every language) and its
+ * caption per shop language (iso => text).
+ *
+ * Without $perLanguage: the plan's images (the cover and the English frames) for every language, without captions.
+ * With $perLanguage (the shop has heavenlangimages_images): the cover for every language with the product name as
+ * caption, then per screenshot of docs.json one frame per module language the shop has (docs/framed/<iso>/<id>.png,
+ * caption = the frame title of that language); shop languages without a frame of their own share the English frame.
+ * A screenshot that every shop language sees in English is one image for every language.
+ *
+ * @param array<string, mixed> $ctx
+ * @param array<string, mixed> $plan
+ * @param array<int, array{iso: string, name: string, module: string|null}> $languages
+ *
+ * @return list<array{file: string, languages: string[], legends: array<string, string>}>
+ */
+function publish_shop_image_set(array $ctx, array $plan, array $languages, bool $perLanguage): array
+{
+    if (!$perLanguage) {
+        return array_map(static fn (string $file): array => ['file' => $file, 'languages' => [], 'legends' => []], $plan['images']);
+    }
+    $repo = $ctx['repo'];
+    $source = (string) $plan['source'];
+    $set = [];
+    $first = (string) ($plan['images'][0] ?? '');
+    if (str_contains($first, '/docs/marketing/cover')) {
+        $legends = [];
+        foreach ($languages as $language) {
+            $legends[$language['iso']] = publish_shop_legend((string) ($plan['name'][$language['module'] ?? $source] ?? $plan['name'][$source] ?? ''));
+        }
+        $set[] = ['file' => $first, 'languages' => [], 'legends' => array_filter($legends, static fn (string $l): bool => $l !== '')];
+    }
+    $captions = [$source => publish_json("$repo/docs/content/$source/screenshots.json")];
+    foreach ((array) (publish_json("$repo/docs/docs.json")['screenshots'] ?? []) as $shot) {
+        $id = (string) ($shot['id'] ?? '');
+        $english = "$repo/docs/framed/$source/$id.png";
+        if ($id === '' || !is_file($english)) {
+            continue;
+        }
+        $groups = [];
+        foreach ($languages as $language) {
+            $module = $language['module'];
+            $own = $module !== null && $module !== $source && is_file("$repo/docs/framed/$module/$id.png");
+            $file = $own ? "$repo/docs/framed/$module/$id.png" : $english;
+            $captionLanguage = $own ? $module : $source;
+            $captions[$captionLanguage] ??= publish_json("$repo/docs/content/$captionLanguage/screenshots.json");
+            $title = (string) ($captions[$captionLanguage][$id]['title'] ?? $captions[$source][$id]['title'] ?? '');
+            $groups[$file]['languages'][] = $language['iso'];
+            $groups[$file]['legends'][$language['iso']] = publish_shop_legend($title);
+        }
+        foreach ($groups as $file => $group) {
+            $set[] = [
+                'file' => (string) $file,
+                'languages' => count($groups) === 1 ? [] : $group['languages'],
+                'legends' => array_filter($group['legends'], static fn (string $l): bool => $l !== ''),
+            ];
+        }
+    }
+
+    return $set;
+}
+
+/**
+ * A caption PrestaShop accepts for an image (ps_image_lang.legend): one line, without < > = { }, at most 128 characters.
+ */
+function publish_shop_legend(string $text): string
+{
+    $clean = trim((string) preg_replace('/[\x00-\x1F\x7F<>={}]+/u', ' ', $text));
+
+    return publish_shop_cut((string) preg_replace('/\s{2,}/u', ' ', $clean), 128);
+}
+
+/**
+ * Gives every uploaded image its languages and captions through heavenlangimages_images (PUT per image). Returns the
+ * problems ([] when all went well); a problem never undoes the upload: the image then shows in every language.
+ *
+ * @param array{api: string, key: string} $ws
+ * @param list<array{file: string, languages: string[], legends: array<string, string>}> $set
+ * @param int[] $imageIds the ids of the uploaded images, in upload order
+ *
+ * @return string[]
+ */
+function publish_shop_set_image_languages(array $ws, array $set, array $imageIds): array
+{
+    if (count($imageIds) !== count($set)) {
+        return ['the shop lists ' . count($imageIds) . ' new image(s) for ' . count($set) . ' upload(s): the languages of the images were not set'];
+    }
+    $problems = [];
+    foreach ($set as $n => $entry) {
+        try {
+            publish_shop_ws($ws, 'PUT', PUBLISH_SHOP_IMAGE_LANGUAGES . '/' . $imageIds[$n], [], publish_shop_image_languages_xml($entry['languages'], $entry['legends']));
+        } catch (RuntimeException $e) {
+            $problems[] = 'image #' . $imageIds[$n] . ' (' . basename(dirname($entry['file'])) . '/' . basename($entry['file']) . '): ' . publish_mask($e->getMessage());
+        }
+    }
+
+    return $problems;
+}
+
+/**
+ * The PUT body of heavenlangimages_images: the languages of the image by iso code (none = every language) and its
+ * captions per language.
+ *
+ * @param string[] $isos
+ * @param array<string, string> $legends iso => caption
+ */
+function publish_shop_image_languages_xml(array $isos, array $legends): string
+{
+    $doc = new DOMDocument('1.0', 'UTF-8');
+    $image = $doc->appendChild($doc->createElement('prestashop'))->appendChild($doc->createElement('heavenlangimages_image'));
+    $list = $image->appendChild($doc->createElement('languages'));
+    foreach ($isos as $iso) {
+        $list->appendChild($doc->createElement('language'))->appendChild($doc->createElement('iso_code'))->appendChild($doc->createTextNode($iso));
+    }
+    if ($legends !== []) {
+        $captions = $image->appendChild($doc->createElement('legends'));
+        foreach ($legends as $iso => $text) {
+            $legend = $captions->appendChild($doc->createElement('legend'));
+            $legend->appendChild($doc->createElement('iso_code'))->appendChild($doc->createTextNode((string) $iso));
+            $legend->appendChild($doc->createElement('value'))->appendChild($doc->createCDATASection($text));
+        }
+    }
+
+    return (string) $doc->saveXML();
+}
+
+/**
+ * The image line of the plan: how many images, and whether they get languages of their own.
+ *
+ * @param array<string, mixed> $ctx
+ * @param list<array{file: string, languages: string[], legends: array<string, string>}> $set
+ */
+function publish_shop_describe_images(array $ctx, array $set, bool $perLanguage): string
+{
+    if (!$perLanguage) {
+        return implode(', ', array_map(static fn (array $e): string => publish_shop_relative($ctx, $e['file']), $set))
+            . ' (first = cover; every language: the shop has no ' . PUBLISH_SHOP_IMAGE_LANGUAGES . ' resource with GET and PUT for this key)';
+    }
+    $own = count(array_filter($set, static fn (array $e): bool => $e['languages'] !== []));
+
+    return count($set) . ' (first = cover; ' . $own . ' frame(s) for some languages only, languages and captions set through ' . PUBLISH_SHOP_IMAGE_LANGUAGES . ')';
+}
+
+/**
  * The translation of an English text in a module catalogue (i18n/<iso>.json: domain -> English -> translation or
  * {text, machine}); the English text itself when the catalogue does not have it.
  *
@@ -1146,8 +1363,9 @@ function publish_shop_xml(string $node, array $fields, array $multilang, array $
  * @param array<string, mixed> $ctx
  * @param array<string, mixed> $plan
  * @param array<int, array{iso: string, name: string, module: string|null}>|null $languages null: shop not asked
+ * @param string|null $images the image line (publish_shop_describe_images()); null: the plan's images
  */
-function publish_shop_print_plan(array $ctx, array $plan, ?array $languages, int $category, int $tax): void
+function publish_shop_print_plan(array $ctx, array $plan, ?array $languages, int $category, int $tax, ?string $images = null): void
 {
     $source = $plan['source'];
     echo "Sales shop product for {$ctx['module']} {$ctx['version']}:\n";
@@ -1156,7 +1374,7 @@ function publish_shop_print_plan(array $ctx, array $plan, ?array $languages, int
     printf("  %-13s %.2f excl. tax, tax rule %s\n", 'Price', $plan['price'], $tax > 0 ? "#$tax" : 'none (set it by hand)');
     printf("  %-13s #%d\n", 'Category', $category);
     printf("  %-13s %s\n", 'Features', implode(', ', array_map(static fn (array $f): string => ($f['name']['en'] ?? '?') . ': ' . ($f['value']['en'] ?? '?'), $plan['features'])));
-    printf("  %-13s %s\n", 'Images', implode(', ', array_map(static fn (string $f): string => publish_shop_relative($ctx, $f), $plan['images'])) . ' (first = cover)');
+    printf("  %-13s %s\n", 'Images', $images ?? implode(', ', array_map(static fn (string $f): string => publish_shop_relative($ctx, $f), $plan['images'])) . ' (first = cover)');
     printf("  %-13s %s\n", 'Status', 'INACTIVE (you activate it), virtual product; the zip is added by hand');
     if ($plan['fallback'] !== []) {
         printf("  %-13s %s\n", 'No texts', implode(' ', $plan['fallback']) . ' (no docs/content/<iso>/marketing.json: English)');

@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.22.0] - 2026-10-24
+
+### Toegevoegd
+- `publish shop` (aanmaken en `--update`): afbeeldingen per taal. Heeft de verkoopwinkel de module Language-Specific
+  Product Images (webservice-resource `heavenlangimages_images` met GET + PUT voor de sleutel), dan komt elke
+  screenshot als frame per winkeltaal (`docs/framed/<iso>/<id>.png`, Engels voor een taal zonder eigen frame) en krijgt
+  elke afbeelding na het uploaden zijn talen en zijn bijschrift (de titel van het frame; bij de cover de productnaam)
+  via die resource. Een geweigerde PUT laat die afbeelding voor alle talen staan en wordt een handmatige stap. Zonder
+  de resource werkt het als voorheen (cover + Engelse frames voor alle talen); het plan zegt waarom.
+- Eigen tests: frames per taal met talen en bijschriften, zonder PUT-recht zoals voorheen, een geweigerde PUT als
+  handmatige stap, het bijschrift (max. 128 tekens, zonder `< > = { }`) en de XML van de resource. De nep-webservice
+  kent de resource (`image_languages_module`).
+
 ## [1.21.1] - 2026-10-24
 
 ### Opgelost

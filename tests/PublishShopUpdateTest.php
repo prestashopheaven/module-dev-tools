@@ -323,6 +323,113 @@ final class PublishShopUpdateTest extends TestCase
     }
 
     /**
+     * With the module Language-Specific Product Images in the shop, every screenshot comes in the languages the module
+     * has frames for; each image gets its shop languages and its caption, the cover is for every language.
+     */
+    public function testWithTheImageLanguagesModuleEveryShopLanguageGetsItsOwnFrames(): void
+    {
+        $this->addLanguageFrames();
+        $state = $this->shopState();
+        $state['image_languages_module'] = true;
+        $this->writeState($state);
+
+        [$code, $output] = $this->runUpdate();
+
+        $after = $this->state();
+        $images = array_filter($after['images'], static fn (array $i): bool => $i['product'] === '12');
+        self::assertSame(0, $code, $output);
+        self::assertSame([102, 103, 104, 105], array_keys($images), 'cover, front (en + de), front (nl), configure (every language)');
+        self::assertTrue($images[102]['cover']);
+        self::assertSame([
+            '102' => ['languages' => [], 'legends' => ['en' => 'Price Drop Alerts', 'nl' => 'Prijsdalingsmeldingen', 'de' => 'Price Drop Alerts']],
+            '103' => ['languages' => ['en', 'de'], 'legends' => ['en' => 'See the alert', 'de' => 'See the alert']],
+            '104' => ['languages' => ['nl'], 'legends' => ['nl' => 'Bekijk de melding']],
+            '105' => ['languages' => [], 'legends' => ['en' => 'Settings', 'nl' => 'Settings', 'de' => 'Settings']],
+        ], $after['image_languages']);
+        self::assertStringContainsString('languages and captions set for 4/4 image(s)', $output);
+        self::assertStringContainsString('front.png (nl)', $output);
+    }
+
+    /**
+     * Without PUT on heavenlangimages_images the update works as before: the English frames for every language.
+     */
+    public function testWithoutPermissionForImageLanguagesEveryLanguageGetsTheEnglishFrames(): void
+    {
+        $this->addLanguageFrames();
+        $state = $this->shopState();
+        $state['image_languages_module'] = true;
+        $state['denied'] = ['heavenlangimages_images put'];
+        $this->writeState($state);
+
+        [$code, $output] = $this->runUpdate();
+
+        $images = array_filter($this->state()['images'], static fn (array $i): bool => $i['product'] === '12');
+        self::assertSame(0, $code);
+        self::assertCount(3, $images);
+        self::assertArrayNotHasKey('image_languages', $this->state());
+        self::assertStringContainsString('every language: the shop has no heavenlangimages_images resource with GET and PUT', $output);
+    }
+
+    /**
+     * A refused language PUT keeps the image (for every language) and becomes a manual step; the update goes on.
+     */
+    public function testARefusedImageLanguagePutIsAManualStep(): void
+    {
+        $this->addLanguageFrames();
+        $state = $this->shopState();
+        $state['image_languages_module'] = true;
+        $state['fail']['image_languages_at'] = 2;
+        $this->writeState($state);
+
+        [$code, $output] = $this->runUpdate();
+
+        self::assertSame(0, $code);
+        self::assertCount(3, $this->state()['image_languages']);
+        self::assertStringContainsString('languages and captions set for 3/4 image(s)', $output);
+        self::assertStringContainsString('1 image(s) without their languages', $output);
+    }
+
+    /**
+     * Captions are made acceptable for PrestaShop: one line, no < > = { }, at most 128 characters.
+     */
+    public function testLegendCleansTheCaption(): void
+    {
+        self::assertSame('A b c', publish_shop_legend("A <b>\nc"));
+        self::assertSame('x y', publish_shop_legend('x = y'));
+        self::assertSame(128, mb_strlen(publish_shop_legend(str_repeat('é', 200))));
+        self::assertSame('', publish_shop_legend(" \t "));
+    }
+
+    /**
+     * The PUT body of heavenlangimages_images: iso codes, an empty list for every language, captions as CDATA.
+     */
+    public function testImageLanguagesXml(): void
+    {
+        $xml = publish_shop_image_languages_xml(['nl', 'de'], ['nl' => 'Voorkant & meer']);
+        $all = publish_shop_image_languages_xml([], []);
+
+        self::assertStringContainsString('<languages><language><iso_code>nl</iso_code></language><language><iso_code>de</iso_code></language></languages>', $xml);
+        self::assertStringContainsString('<legend><iso_code>nl</iso_code><value><![CDATA[Voorkant & meer]]></value></legend>', $xml);
+        self::assertStringContainsString('<heavenlangimages_image><languages/></heavenlangimages_image>', $all);
+    }
+
+    /**
+     * Dutch frames for one screenshot and the captions of both languages.
+     */
+    private function addLanguageFrames(): void
+    {
+        $files = [
+            'docs/framed/nl/front.png' => 'png',
+            'docs/content/en/screenshots.json' => json_encode(['front' => ['title' => 'See the alert'], 'configure' => ['title' => 'Settings']]),
+            'docs/content/nl/screenshots.json' => json_encode(['front' => ['title' => 'Bekijk de melding'], 'configure' => ['title' => 'Instellingen']]),
+        ];
+        foreach ($files as $file => $content) {
+            @mkdir(dirname("$this->repo/$file"), 0777, true);
+            file_put_contents("$this->repo/$file", (string) $content);
+        }
+    }
+
+    /**
      * Runs publish shop --update on the test repository; returns the exit code and the output.
      *
      * @return array{0: int, 1: string}
