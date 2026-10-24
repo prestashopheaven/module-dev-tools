@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.21.0] - 2026-10-24
+
+### Toegevoegd
+- Docs-site (`publish site`/`publish docs`): elke taal op de pagina met alle handleidingen heeft zijn vlag, voor de
+  naam in de lijst en in de grote PDF-knop (bij rechts-naar-linkstalen rechts). De vlaggen staan als
+  `flag-<land>.svg` naast `index.php` (flag-icons 7.6.0, MIT, in `resources/publish/flags/`); welk land bij welke taal
+  hoort staat als `flag` in `resources/languages.json`. Een taal zonder vlag krijgt alleen zijn naam.
+- Eigen tests: `PublishSiteTest` (elke taal heeft een vlag, de site krijgt de vlaggen en toont ze, een onbekende of
+  vreemde vlagwaarde wordt niet gekopieerd).
+
 ## [1.20.1] - 2026-10-23
 
 ### Gewijzigd

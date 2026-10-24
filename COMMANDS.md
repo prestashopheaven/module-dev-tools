@@ -278,7 +278,7 @@ publish a released version: the tag `v<version>` must exist, unless it runs in C
 | Command | What it does |
 |---|---|
 | `status [--check]` | The checklist of the current version: Addons upload, docs site, demo shop, sales shop. `--check`: also ask the docs site which version it shows. Exit 0 when all are done. |
-| `site` | Builds `dist/docs-site/<module>/`: `index.php` + `readme_<iso>.pdf` of every language (from `docs build`). |
+| `site` | Builds `dist/docs-site/<module>/`: `index.php` + `readme_<iso>.pdf` of every language (from `docs build`) + `flag-<country>.svg`, the flag shown next to each language. |
 | `docs [--dry-run] [--force] [--no-snapshot]` | Builds the site and uploads it by SFTP to `<DOCS_SITE_SFTP_PATH>/<module>/`, removes stale files there, then checks `<DOCS_SITE_URL>/<module>/index.php`. With `DEMO_SITE_SSH_HOST` set it then rewrites the intro page of the demo shop (`settings intro`), which links the docs site of every module. Afterwards a TransIP VPS snapshot, unless `--no-snapshot`. |
 | `demo [--dry-run] [--force] [--no-snapshot]` | Puts `dist/<module>.zip` in the demo shop (below). Needs the checked zip of the current code (`build` + `validate-zip`), except in CI. Afterwards a VPS snapshot, unless `--no-snapshot`. |
 | `vps-snapshot [<description>] [--dry-run]` | A TransIP snapshot of the whole VPS. `--dry-run` logs in read-only and lists the VPS and its snapshots. |
