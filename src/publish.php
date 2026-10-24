@@ -490,8 +490,10 @@ function publish_write_state(array $ctx, array $state): void
 // Docs site
 
 /**
- * Builds dist/docs-site/<module>/: index.php (from resources/publish/index.php) and the PDF manual of every
- * language of i18n.json (docs/manual/<iso>/readme_<iso>.pdf, made by `ps-module docs build`). Returns the directory.
+ * Builds dist/docs-site/<module>/: index.php (from resources/publish/index.php), the PDF manual of every language of
+ * i18n.json (docs/manual/<iso>/readme_<iso>.pdf, made by `ps-module docs build`) and the flag of each language
+ * (flag-<country>.svg, from resources/publish/flags/ by the 'flag' of resources/languages.json). Returns the
+ * directory.
  *
  * @param array<string, mixed> $ctx
  *
@@ -524,6 +526,7 @@ function publish_build_site(array $ctx): string
         copy($ctx['repo'] . "/docs/manual/$iso/$pdf", "$dir/$pdf");
         ps_vlog("docs site: docs/manual/$iso/$pdf (" . publish_size((int) filesize("$dir/$pdf")) . ')');
         $entry = (array) ($ctx['catalog'][$iso] ?? []);
+        $flag = publish_site_flag((string) ($entry['flag'] ?? ''), $dir);
         $languages[$iso] = [
             'native' => (string) ($entry['native'] ?? $entry['name'] ?? $iso),
             'name' => (string) ($entry['name'] ?? $iso),
@@ -532,6 +535,7 @@ function publish_build_site(array $ctx): string
             'description' => (string) ($translations[$iso]['description'] ?? $spec['description'] ?? ''),
             'pdf' => $pdf,
             'size' => (int) filesize("$dir/$pdf"),
+            'flag' => $flag,
         ];
     }
     $site = [
@@ -550,9 +554,31 @@ function publish_build_site(array $ctx): string
     }
     file_put_contents("$dir/index.php", str_replace($marker, var_export($site, true), $template));
     $size = array_sum(array_column($languages, 'size'));
-    printf("Docs site built: %s (index.php + %d PDF(s), %.1f MB)\n", substr($dir, strlen($ctx['repo']) + 1), count($languages), $size / 1048576);
+    $flags = count(array_unique(array_filter(array_column($languages, 'flag'))));
+    printf("Docs site built: %s (index.php + %d PDF(s) + %d flag(s), %.1f MB)\n", substr($dir, strlen($ctx['repo']) + 1), count($languages), $flags, $size / 1048576);
 
     return $dir;
+}
+
+/**
+ * Copies the flag of a country (resources/publish/flags/<country>.svg) into the docs site as flag-<country>.svg and
+ * returns that file name; '' when there is no such flag (the page then shows the language without one).
+ */
+function publish_site_flag(string $country, string $dir): string
+{
+    if (preg_match('/^[a-z]{2}(-[a-z]+)?$/', $country) !== 1) {
+        return '';
+    }
+    $source = __DIR__ . "/../resources/publish/flags/$country.svg";
+    if (!is_file($source)) {
+        return '';
+    }
+    $file = "flag-$country.svg";
+    if (!is_file("$dir/$file")) {
+        copy($source, "$dir/$file");
+    }
+
+    return $file;
 }
 
 /**

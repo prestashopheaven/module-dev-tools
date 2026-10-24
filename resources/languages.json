@@ -1,5 +1,5 @@
 {
-  "_comment": "Languages a module can be translated into (translations, manuals, marketing). 'locale' is the PrestaShop locale used for translations/<locale>/*.xlf. 'ps_iso' is PrestaShop's own ISO code (ps_lang.iso_code, also the mails/<iso>/ directory) when it differs from the key. 'native' is the name in the language itself (language pickers). 'rtl' marks right-to-left scripts. Checked against app/Resources/all_languages.json of PrestaShop 8.1.0 and 9.2.0.",
+  "_comment": "Languages a module can be translated into (translations, manuals, marketing). 'locale' is the PrestaShop locale used for translations/<locale>/*.xlf. 'ps_iso' is PrestaShop's own ISO code (ps_lang.iso_code, also the mails/<iso>/ directory) when it differs from the key. 'native' is the name in the language itself (language pickers). 'rtl' marks right-to-left scripts. Checked against app/Resources/all_languages.json of PrestaShop 8.1.0 and 9.2.0. 'flag' is the country of the flag shown next to the language (docs site): resources/publish/flags/<flag>.svg.",
   "default_enabled": [
     "en",
     "fr",
@@ -15,170 +15,203 @@
     "en": {
       "name": "English",
       "native": "English",
-      "locale": "en-US"
+      "locale": "en-US",
+      "flag": "gb"
     },
     "fr": {
       "name": "French",
       "native": "Français",
-      "locale": "fr-FR"
+      "locale": "fr-FR",
+      "flag": "fr"
     },
     "es": {
       "name": "Spanish",
       "native": "Español",
-      "locale": "es-ES"
+      "locale": "es-ES",
+      "flag": "es"
     },
     "it": {
       "name": "Italian",
       "native": "Italiano",
-      "locale": "it-IT"
+      "locale": "it-IT",
+      "flag": "it"
     },
     "pl": {
       "name": "Polish",
       "native": "Polski",
-      "locale": "pl-PL"
+      "locale": "pl-PL",
+      "flag": "pl"
     },
     "de": {
       "name": "German",
       "native": "Deutsch",
-      "locale": "de-DE"
+      "locale": "de-DE",
+      "flag": "de"
     },
     "sl": {
       "name": "Slovenian",
       "native": "Slovenščina",
       "locale": "sl-SI",
-      "ps_iso": "si"
+      "ps_iso": "si",
+      "flag": "si"
     },
     "ar": {
       "name": "Arabic",
       "native": "العربية",
       "locale": "ar-SA",
-      "rtl": true
+      "rtl": true,
+      "flag": "sa"
     },
     "bg": {
       "name": "Bulgarian",
       "native": "Български",
-      "locale": "bg-BG"
+      "locale": "bg-BG",
+      "flag": "bg"
     },
     "cs": {
       "name": "Czech",
       "native": "Čeština",
-      "locale": "cs-CZ"
+      "locale": "cs-CZ",
+      "flag": "cz"
     },
     "da": {
       "name": "Danish",
       "native": "Dansk",
-      "locale": "da-DK"
+      "locale": "da-DK",
+      "flag": "dk"
     },
     "el": {
       "name": "Greek",
       "native": "Ελληνικά",
-      "locale": "el-GR"
+      "locale": "el-GR",
+      "flag": "gr"
     },
     "et": {
       "name": "Estonian",
       "native": "Eesti",
-      "locale": "et-EE"
+      "locale": "et-EE",
+      "flag": "ee"
     },
     "fi": {
       "name": "Finnish",
       "native": "Suomi",
-      "locale": "fi-FI"
+      "locale": "fi-FI",
+      "flag": "fi"
     },
     "hu": {
       "name": "Hungarian",
       "native": "Magyar",
-      "locale": "hu-HU"
+      "locale": "hu-HU",
+      "flag": "hu"
     },
     "id": {
       "name": "Indonesian",
       "native": "Bahasa Indonesia",
-      "locale": "id-ID"
+      "locale": "id-ID",
+      "flag": "id"
     },
     "ja": {
       "name": "Japanese",
       "native": "日本語",
-      "locale": "ja-JP"
+      "locale": "ja-JP",
+      "flag": "jp"
     },
     "ko": {
       "name": "Korean",
       "native": "한국어",
-      "locale": "ko-KR"
+      "locale": "ko-KR",
+      "flag": "kr"
     },
     "lt": {
       "name": "Lithuanian",
       "native": "Lietuvių",
-      "locale": "lt-LT"
+      "locale": "lt-LT",
+      "flag": "lt"
     },
     "lv": {
       "name": "Latvian",
       "native": "Latviešu",
-      "locale": "lv-LV"
+      "locale": "lv-LV",
+      "flag": "lv"
     },
     "no": {
       "name": "Norwegian Bokmål",
       "native": "Norsk bokmål",
-      "locale": "no-NO"
+      "locale": "no-NO",
+      "flag": "no"
     },
     "nl": {
       "name": "Dutch",
       "native": "Nederlands",
-      "locale": "nl-NL"
+      "locale": "nl-NL",
+      "flag": "nl"
     },
     "pt": {
       "name": "Portuguese",
       "native": "Português",
-      "locale": "pt-PT"
+      "locale": "pt-PT",
+      "flag": "pt"
     },
     "ro": {
       "name": "Romanian",
       "native": "Română",
-      "locale": "ro-RO"
+      "locale": "ro-RO",
+      "flag": "ro"
     },
     "ru": {
       "name": "Russian",
       "native": "Русский",
-      "locale": "ru-RU"
+      "locale": "ru-RU",
+      "flag": "ru"
     },
     "sk": {
       "name": "Slovak",
       "native": "Slovenčina",
-      "locale": "sk-SK"
+      "locale": "sk-SK",
+      "flag": "sk"
     },
     "sq": {
       "name": "Albanian",
       "native": "Shqip",
-      "locale": "sq-AL"
+      "locale": "sq-AL",
+      "flag": "al"
     },
     "sv": {
       "name": "Swedish",
       "native": "Svenska",
-      "locale": "sv-SE"
+      "locale": "sv-SE",
+      "flag": "se"
     },
     "th": {
       "name": "Thai",
       "native": "ไทย",
-      "locale": "th-TH"
+      "locale": "th-TH",
+      "flag": "th"
     },
     "tr": {
       "name": "Turkish",
       "native": "Türkçe",
-      "locale": "tr-TR"
+      "locale": "tr-TR",
+      "flag": "tr"
     },
     "uk": {
       "name": "Ukrainian",
       "native": "Українська",
-      "locale": "uk-UA"
+      "locale": "uk-UA",
+      "flag": "ua"
     },
     "vi": {
       "name": "Vietnamese",
       "native": "Tiếng Việt",
       "locale": "vi-VN",
-      "ps_iso": "vn"
+      "ps_iso": "vn",
+      "flag": "vn"
     },
     "zh": {
       "name": "Chinese",
       "native": "中文",
-      "locale": "zh-CN"
+      "locale": "zh-CN",
+      "flag": "cn"
     }
   }
 }
