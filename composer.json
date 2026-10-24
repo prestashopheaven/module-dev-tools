@@ -1,7 +1,7 @@
 {
     "name": "prestashopheaven/module-dev-tools",
     "description": "Development tooling for PrestaHaven PrestaShop modules: validator pre-check, release zip with scoped vendor, Docker test shops, PHPStan against PrestaShop 8 and 9, conventions check and definition-of-done stamps.",
-    "version": "1.23.0",
+    "version": "1.24.0",
     "type": "library",
     "license": "AFL-3.0",
     "authors": [

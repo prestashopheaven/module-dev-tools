@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.24.0] - 2026-10-24
+
+### Toegevoegd
+- Gratis modules in de docs: `docs.json > marketing.price` mag `0` zijn (een module die niet via Addons wordt
+  verkocht, zoals de PrestaHaven Updater). Elke andere prijs blijft tussen 49.99 en 4999.99; het marketingblad toont
+  "Free" in plaats van "€ 0.00".
+
 ## [1.23.0] - 2026-10-24
 
 ### Toegevoegd
