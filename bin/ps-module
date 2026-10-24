@@ -44,8 +44,16 @@
  *   ps-module demo-site <command>    check | install-prestashop | setup | config | status | snapshot | restore | test |
  *                                    nightly | demo-mode on|off | settings | push | vps-snapshot: the demo shop (one shop
  *                                    for all modules), reset to its snapshot and tested every night (resources/publish/demo-site.sh)
- *   ps-module git <command>          status [--remote] | start <name> [--fix] | pr | finish | later:
- *                                    feature branches, commit, push, pull/merge request, merge, clean up (GIT-01..07)
+ *   ps-module git <command>          status [--remote] | start <name> [--fix] | pr [--release=X.Y.Z --notes=… [--publish]] |
+ *                                    merge | finish | later: feature branches, commit, push, pull/merge request, merge,
+ *                                    clean up (GIT-01..07); --publish puts the Update-* trailers for the update server in
+ *                                    the PR, and merge squashes with them in the release commit
+ *   ps-module sign <zip> [options]   <zip>.sig for the update server (UPDATE_SIGNING_KEY); --trailers-from=HEAD reads the
+ *                                    Update-* trailers of the release commit (the release workflow)
+ *   ps-module update-keys generate | public
+ *                                    the release signing key pair: private key into .env and the GitHub org secret
+ *   ps-module update backfill-signatures [--repo=owner/name] [--dry-run]
+ *                                    sign existing GitHub releases that have no <module>.zip.sig yet
  *   ps-module context [--no-notes|--generate|--status]
  *                                    <repo>/CONTEXT.md: regenerate the overview and record that the Notes match the code
  *   ps-module index                  add the module's index.php to every directory that lacks one (not vendor/, never via symlinks)
@@ -112,6 +120,27 @@ switch ($command) {
     case 'build':
         requireModule($moduleDir);
         exit(script('build-zip.php', [$moduleDir]));
+
+    case 'sign':
+        require_once $src . '/update-sign.php';
+        exit(update_sign_cli($args));
+
+    case 'update-keys':
+    case 'update':
+        require_once $src . '/update-sign.php';
+        $workspace = update_workspace_dir((string) getcwd()) ?? update_workspace_dir(dirname(__DIR__));
+        if ($workspace === null) {
+            fwrite(STDERR, "ps-module $command: run it inside the modules workspace.\n");
+            exit(2);
+        }
+        if ($command === 'update-keys') {
+            exit(update_keys_cli($args, $workspace));
+        }
+        if (($args[0] ?? '') === 'backfill-signatures') {
+            exit(update_backfill_cli(array_slice($args, 1), $workspace));
+        }
+        fwrite(STDERR, "ps-module update backfill-signatures [--repo=owner/name ...] [--dry-run]\n");
+        exit(2);
 
     case 'validate-zip':
         requireModule($moduleDir);

@@ -78,7 +78,10 @@ function gitflow_cli(array $args): int
             return gitflow_start($repoDir, (string) ($args[0] ?? ''), in_array('--fix', $args, true) ? 'fix' : 'feature');
 
         case 'pr':
-            return gitflow_pr($repoDir);
+            return gitflow_pr($repoDir, gitflow_options($args));
+
+        case 'merge':
+            return gitflow_merge($repoDir);
 
         case 'finish':
             return gitflow_finish($repoDir);
@@ -90,7 +93,9 @@ function gitflow_cli(array $args): int
 
             return 0;
     }
-    fwrite(STDERR, "Usage: ps-module git status [--remote] [--json] | start <slug> [--fix] | pr | finish | later\n");
+    fwrite(STDERR, "Usage: ps-module git status [--remote] [--json] | start <slug> [--fix]"
+        . " | pr [--release=X.Y.Z --notes=... [--publish [--no-accept] [--channel=beta] [--rollout=N] [--min-updater=X.Y.Z] [--prestashop=...] [--php=...]]]"
+        . " | merge | finish | later\n");
 
     return 2;
 }
@@ -481,7 +486,13 @@ function gitflow_start(string $repoDir, string $slug, string $type): int
  * Pushes the current branch and opens a pull request (GitHub, via gh) or merge request (GitLab, via
  * push options). The title is the last commit's subject; the body lists the commits.
  */
-function gitflow_pr(string $repoDir): int
+/**
+ * Pushes the branch and opens the pull request; with --release the title is "Release X.Y.Z - <notes>" and with
+ * --publish the Update-* trailers for the update server go into the PR body (ps-module git merge uses them).
+ *
+ * @param array<string, string> $options
+ */
+function gitflow_pr(string $repoDir, array $options = []): int
 {
     $state = gitflow_state($repoDir, true);
     if ($state['on_default']) {
@@ -504,6 +515,25 @@ function gitflow_pr(string $repoDir): int
     [, $log] = gitflow_git($repoDir, ['log', '--oneline', '--no-decorate', "{$state['default']}..HEAD"]);
     $subjects = array_map(static fn (string $l): string => (string) preg_replace('/^[0-9a-f]+\s+/', '', $l), array_filter(preg_split('/\R/', $log) ?: []));
     $title = $subjects !== [] ? (string) end($subjects) : (string) $state['branch']; // the first commit of the branch
+    $trailers = '';
+    if (isset($options['release'])) {
+        if (preg_match('/^\d+\.\d+\.\d+$/', $options['release']) !== 1) {
+            fwrite(STDERR, "ps-module git: --release must look like 1.2.3.\n");
+
+            return 1;
+        }
+        $notes = trim($options['notes'] ?? '');
+        $title = 'Release ' . $options['release'] . ' - ' . ($notes !== '' ? $notes : (string) preg_replace('/^Release \S+ - /', '', $title));
+        if (isset($options['publish'])) {
+            try {
+                $trailers = gitflow_release_trailers($repoDir, $options);
+            } catch (RuntimeException $e) {
+                fwrite(STDERR, 'ps-module git: ' . $e->getMessage() . "\n");
+
+                return 1;
+            }
+        }
+    }
     ps_vlog('git: ' . count($subjects) . " commit(s) on {$state['branch']}, title \"$title\", host {$state['host']}");
     $log = implode("\n", array_map(static fn (string $l): string => "- $l", $subjects));
     if ($state['host'] === 'gitlab') {
@@ -530,11 +560,128 @@ function gitflow_pr(string $repoDir): int
         return 0;
     }
     $bodyFile = (string) tempnam(sys_get_temp_dir(), 'pspr');
-    file_put_contents($bodyFile, "Changes:\n$log\n\nDefinition of done: `composer verify` passed (`vendor/bin/ps-module status`).\n");
+    file_put_contents($bodyFile, "Changes:\n$log\n\nDefinition of done: `composer verify` passed (`vendor/bin/ps-module status`).\n"
+        . ($trailers !== '' ? "\nUpdate server (these lines go into the squash commit with `ps-module git merge`):\n\n" . GITFLOW_TRAILERS_START . "\n$trailers\n" . GITFLOW_TRAILERS_END . "\n" : ''));
     [$code, $out] = gitflow_run('gh pr create --base ' . escapeshellarg($state['default']) . ' --head ' . escapeshellarg($state['branch'])
         . ' --title ' . escapeshellarg($title) . ' --body-file ' . escapeshellarg($bodyFile), $repoDir);
     @unlink($bodyFile);
     echo $out . "\n";
+
+    return $code;
+}
+
+const GITFLOW_TRAILERS_START = '<!-- update-trailers -->';
+const GITFLOW_TRAILERS_END = '<!-- /update-trailers -->';
+/** PrestaShop lines the update server knows (update-system server: app:platforms:seed) and the newest PHP line. */
+const GITFLOW_PS_LINES = ['8.1', '8.2', '9.0', '9.1', '9.2'];
+const GITFLOW_PHP_MAX = '8.5';
+
+/**
+ * --name=value and --flag options of a git subcommand.
+ *
+ * @param string[] $args
+ *
+ * @return array<string, string>
+ */
+function gitflow_options(array $args): array
+{
+    $options = [];
+    foreach ($args as $arg) {
+        if (preg_match('/^--([a-z-]+)(?:=(.*))?$/s', $arg, $m) === 1) {
+            $options[$m[1]] = $m[2] ?? '1';
+        }
+    }
+
+    return $options;
+}
+
+/**
+ * The Update-* trailers of a release commit (update-system/PLAN.md §5): accept automatically with the PrestaShop lines
+ * the module is tested on (testing.json) and PHP from module.spec.json php_min up to the newest PHP line. Options
+ * override every value.
+ *
+ * @param array<string, string> $options
+ */
+function gitflow_release_trailers(string $repoDir, array $options): string
+{
+    $prestashop = $options['prestashop'] ?? '';
+    if ($prestashop === '') {
+        $testing = json_decode((string) @file_get_contents("$repoDir/testing.json"), true);
+        $lines = [];
+        foreach ((array) ($testing['versions'] ?? []) as $version) {
+            if (preg_match('/^(\d+\.\d+)/', (string) $version, $m) === 1 && in_array($m[1], GITFLOW_PS_LINES, true)) {
+                $lines[$m[1]] = true;
+            }
+        }
+        if ($lines === []) {
+            throw new RuntimeException('No tested PrestaShop versions in testing.json; pass --prestashop=8.1,9.2.');
+        }
+        $prestashop = implode(', ', array_keys($lines));
+    }
+    $php = $options['php'] ?? '';
+    if ($php === '') {
+        $spec = json_decode((string) @file_get_contents("$repoDir/module.spec.json"), true);
+        $min = (string) ($spec['php_min'] ?? '8.1');
+        if (preg_match('/^(\d+\.\d+)/', $min, $m) !== 1) {
+            throw new RuntimeException('module.spec.json php_min is missing; pass --php=8.1-8.5.');
+        }
+        $php = $m[1] === GITFLOW_PHP_MAX ? $m[1] : $m[1] . '-' . GITFLOW_PHP_MAX;
+    }
+    $trailers = [
+        'Update-Publish: ' . (isset($options['no-accept']) ? 'pending' : 'accept'),
+        'Update-PrestaShop: ' . $prestashop,
+        'Update-PHP: ' . $php,
+        'Update-Channel: ' . ($options['channel'] ?? 'stable'),
+        'Update-Rollout: ' . ($options['rollout'] ?? '100'),
+    ];
+    if (isset($options['min-updater'])) {
+        $trailers[] = 'Update-Min-Updater: ' . $options['min-updater'];
+    }
+
+    return implode("\n", $trailers);
+}
+
+/** The trailers block of a PR body, or ''. */
+function gitflow_trailers_from_body(string $body): string
+{
+    $start = strpos($body, GITFLOW_TRAILERS_START);
+    $end = strpos($body, GITFLOW_TRAILERS_END);
+    if ($start === false || $end === false || $end < $start) {
+        return '';
+    }
+
+    return trim(substr($body, $start + strlen(GITFLOW_TRAILERS_START), $end - $start - strlen(GITFLOW_TRAILERS_START)));
+}
+
+/**
+ * Squash-merges the open PR of the current branch with its title as the commit subject and, for a release, the
+ * Update-* trailers from the PR body as the commit body (so the release workflow can sign with them). GitHub only.
+ */
+function gitflow_merge(string $repoDir): int
+{
+    $state = gitflow_state($repoDir, true);
+    if (!is_array($state['pr'] ?? null)) {
+        fwrite(STDERR, "ps-module git: there is no open pull request for {$state['branch']} (ps-module git pr).\n");
+
+        return 1;
+    }
+    $number = (string) $state['pr']['number'];
+    [$code, $json] = gitflow_run('gh pr view ' . escapeshellarg($number) . ' --json title,body', $repoDir);
+    $pr = json_decode($json, true);
+    if ($code !== 0 || !is_array($pr)) {
+        fwrite(STDERR, "ps-module git: cannot read PR #$number.\n");
+
+        return 1;
+    }
+    $bodyFile = (string) tempnam(sys_get_temp_dir(), 'psmerge');
+    file_put_contents($bodyFile, gitflow_trailers_from_body((string) ($pr['body'] ?? '')) . "\n");
+    [$code, $out] = gitflow_run('gh pr merge ' . escapeshellarg($number) . ' --squash --subject ' . escapeshellarg((string) $pr['title'])
+        . ' --body-file ' . escapeshellarg($bodyFile), $repoDir);
+    @unlink($bodyFile);
+    echo $out . "\n";
+    if ($code === 0) {
+        echo "ps-module git: PR #$number merged as \"{$pr['title']}\". Clean up with: ps-module git finish\n";
+    }
 
     return $code;
 }

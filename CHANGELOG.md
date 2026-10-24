@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Toegevoegd
+- `ps-module sign <zip>`: ondertekent een release-zip voor de update-server (`<zip>.sig`, ed25519, sleutel uit
+  `UPDATE_SIGNING_KEY`). De ondertekende verklaring bevat module, versie, sha256 en de publicatie-instructies;
+  `--trailers-from=HEAD` leest de `Update-*`-trailers van de releasecommit (voor de release-workflow).
+- `ps-module update-keys generate | public`: het sleutelpaar; de privésleutel gaat naar `.env` en het
+  organisatie-geheim op GitHub (via `gh`, stdin) en wordt nooit getoond.
+- `ps-module update backfill-signatures`: ondertekent bestaande GitHub-releases zonder `.sig` en zet de `.sig` erbij.
+- `ps-module git pr --release X.Y.Z --notes=… --publish`: titel `Release X.Y.Z - …` en de `Update-*`-trailers in de
+  PR (PrestaShop-lijnen uit `testing.json`, PHP vanaf `php_min`); `ps-module git merge` squasht met die trailers in de
+  commit, zodat de update-server de release automatisch accepteert.
+- Tests: ondertekenen, trailers, lijnbereiken, foutgevallen en de route PR-body → squash-commit → handtekening.
+
 ## [1.22.0] - 2026-10-24
 
 ### Toegevoegd
