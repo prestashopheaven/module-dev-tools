@@ -53,6 +53,8 @@ const VIEWPORTS = {
 const DEFAULT_HIDE = [
     '.sf-toolbar', '.sf-minitoolbar', '[id^="sfwdt"]', '[id^="sfToolbar"]', '.sf-toolbarreset',
     '#debug-mode', '.debug-mode', '#header_debug_mode', '.alert-debug-mode',
+    // module-kit's PrestaHaven Updater notice (direct build only): never in docs or marketing screenshots.
+    '#prestahaven-updater-notice',
 ];
 
 const ERROR_NEEDLES = ['Fatal error', 'Parse error', 'Uncaught ', 'Stack trace', 'Invalid token', 'Whoops, looks like something went wrong'];
