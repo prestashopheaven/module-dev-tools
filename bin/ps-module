@@ -28,9 +28,10 @@
  *   ps-module conventions            docblocks, clean main class, DDD + CQRS architecture (DOC-01, MOD-01, ARCH)
  *   ps-module phpstan [<ps-version>...]
  *   ps-module validate [<dir|zip>]   validator pre-check of the source (default) or a zip
- *   ps-module build                  ../dist/<module>.zip (no-dev vendor, scoped, index.php everywhere)
- *   ps-module validate-zip           validator pre-check of ../dist/<module>.zip
- *   ps-module validator-api          upload ../dist/<module>.zip to validator.prestashop.com (needs a key in .env)
+ *   ps-module build                  ../dist/<module>.zip (direct build) and ../dist/addons/<module>.zip (Addons
+ *                                    build: no updater notice, module_key) (no-dev vendor, scoped, index.php everywhere)
+ *   ps-module validate-zip           validator pre-check of both zips
+ *   ps-module validator-api          upload the Addons zip to validator.prestashop.com (needs a key in .env)
  *   ps-module shops <command> ...    PrestaShop test shops in Docker: doctor, run, up, down, integration, behat, upgrade, multistore
  *   ps-module status [--json]        which definition-of-done steps passed on the current code
  *   ps-module skip <step> "<reason>" mark a step that cannot run (reported to the user)
@@ -139,16 +140,27 @@ switch ($command) {
         if (($args[0] ?? '') === 'backfill-signatures') {
             exit(update_backfill_cli(array_slice($args, 1), $workspace));
         }
-        fwrite(STDERR, "ps-module update backfill-signatures [--repo=owner/name ...] [--dry-run]\n");
+        if (($args[0] ?? '') === 'secret') {
+            exit(update_secret_cli(array_slice($args, 1), $workspace, (string) getcwd()));
+        }
+        fwrite(STDERR, "ps-module update backfill-signatures [--repo=owner/name ...] [--dry-run]\n"
+            . "ps-module update secret [--all | --repo=owner/name ...] [--check]\n");
         exit(2);
 
     case 'validate-zip':
         requireModule($moduleDir);
-        exit(script('validate.php', [distZip($moduleDir)]));
+        // Both builds: the direct one (customers, update server) and the Addons one (what Addons gets).
+        $code = script('validate.php', [distZip($moduleDir)]);
+        if ($code === 0 && is_file(addonsZip($moduleDir))) {
+            $code = script('validate.php', [addonsZip($moduleDir)]);
+        }
+        exit($code);
 
     case 'validator-api':
         requireModule($moduleDir);
-        exit(script('validator-api.php', array_merge([$args[0] ?? distZip($moduleDir)], array_slice($args, 1))));
+        // The online validator checks what Addons gets: the Addons build when there is one.
+        $zip = $args[0] ?? (is_file(addonsZip($moduleDir)) ? addonsZip($moduleDir) : distZip($moduleDir));
+        exit(script('validator-api.php', array_merge([$zip], array_slice($args, 1))));
 
     case 'shops':
         requireModule($moduleDir);
@@ -424,6 +436,14 @@ function updateLibraries(string $moduleDir): int
 function distZip(string $moduleDir): string
 {
     return dirname($moduleDir) . '/dist/' . basename($moduleDir) . '.zip';
+}
+
+/**
+ * Path of the Addons build: <repo>/dist/addons/<module>.zip (no updater notice, module_key from module.spec.json).
+ */
+function addonsZip(string $moduleDir): string
+{
+    return dirname($moduleDir) . '/dist/addons/' . basename($moduleDir) . '.zip';
 }
 
 /**

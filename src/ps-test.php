@@ -647,6 +647,11 @@ function runMatrix(array $versions, array $flags): int
         $results['re-install'] = $shop->console('install');
         $results['re-install state'] = compareSnapshots($fresh, $shop->snapshot());
         $results += releaseZipTest($shop, $zip, $fresh);
+        // The Addons build (dist/addons/<module>.zip: no updater notice, module_key) is tested the same way.
+        $addonsZip = $zip !== null ? dirname($zip) . '/addons/' . basename($zip) : null;
+        if ($addonsZip !== null && is_file($addonsZip)) {
+            $results += releaseZipTest($shop, $addonsZip, $fresh, 'Addons zip');
+        }
 
         if (($config['upgrade_from'] ?? 'none') !== 'none' && !in_array('--skip-upgrade', $flags, true)) {
             $results += upgradeTests($shop, $fresh);
@@ -759,11 +764,11 @@ function buildReleaseZip(string $moduleDir): ?string
  *
  * @return array<string, array{ok: bool, output: string}>
  */
-function releaseZipTest(Shop $shop, ?string $zip, array $fresh): array
+function releaseZipTest(Shop $shop, ?string $zip, array $fresh, string $label = 'release zip'): array
 {
     global $moduleDir, $module;
     if ($zip === null) {
-        return ['release zip' => ['ok' => false, 'output' => 'Building the release zip failed (ps-module build).']];
+        return [$label => ['ok' => false, 'output' => 'Building the release zip failed (ps-module build).']];
     }
     $work = str_replace('\\', '/', sys_get_temp_dir()) . '/ps-zip-' . uniqid();
     ps_vlog("release zip test: extracting $zip to $work");
@@ -775,12 +780,17 @@ function releaseZipTest(Shop $shop, ?string $zip, array $fresh): array
     $results = [];
     $shop->console('uninstall');
     $shop->deploy("$work/$module");
-    $results['release zip: install'] = $shop->console('install');
-    $results['release zip: state'] = compareSnapshots($fresh, $shop->snapshot());
-    $results['release zip: smoke'] = $shop->smoke();
-    $results['release zip: back office'] = $shop->backOfficeSmoke((bool) ($fresh['configurable'] ?? false));
-    $results['release zip: uninstall'] = $shop->console('uninstall');
-    $results['release zip: leaves nothing'] = cleanCheck($shop->snapshot());
+    $results["$label: install"] = $shop->console('install');
+    $expected = $fresh;
+    if ($label !== 'release zip') {
+        // The Addons build has no updater notice, so it does not register the notice's hook.
+        $expected['hooks'] = array_values(array_filter((array) $fresh['hooks'], static fn ($hook): bool => strcasecmp((string) $hook, 'displayAdminAfterHeader') !== 0));
+    }
+    $results["$label: state"] = compareSnapshots($expected, $shop->snapshot());
+    $results["$label: smoke"] = $shop->smoke();
+    $results["$label: back office"] = $shop->backOfficeSmoke((bool) ($fresh['configurable'] ?? false));
+    $results["$label: uninstall"] = $shop->console('uninstall');
+    $results["$label: leaves nothing"] = cleanCheck($shop->snapshot());
     removeDir($work);
     ps_vlog('release zip test done; installing the working copy again');
 

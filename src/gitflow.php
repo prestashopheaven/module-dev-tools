@@ -483,11 +483,32 @@ function gitflow_start(string $repoDir, string $slug, string $type): int
 }
 
 /**
- * Pushes the current branch and opens a pull request (GitHub, via gh) or merge request (GitLab, via
- * push options). The title is the last commit's subject; the body lists the commits.
+ * Before a release: makes sure the GitHub repo has the UPDATE_SIGNING_KEY secret, so the release workflow signs the
+ * zip for the update server (private repos on GitHub Free cannot use the organization secret). Sets it from the
+ * workspace .env when it is missing (ps-module update secret); never fatal, but says when the release will be unsigned.
  */
+function gitflow_ensure_signing_secret(string $repoDir): void
+{
+    require_once __DIR__ . '/update-sign.php';
+    $repo = update_repo_of($repoDir);
+    $workspace = update_workspace_dir($repoDir);
+    if ($repo === null || $workspace === null) {
+        return;
+    }
+    [$code, $out] = update_run(['gh', 'secret', 'list', '--repo', $repo, '--json', 'name']);
+    if ($code === 0 && in_array('UPDATE_SIGNING_KEY', array_column(json_decode($out, true) ?: [], 'name'), true)) {
+        return;
+    }
+    echo "ps-module git: $repo has no UPDATE_SIGNING_KEY secret yet; setting it from the workspace .env.\n";
+    if (update_secret_cli(['--repo=' . $repo], $workspace, $repoDir) !== 0) {
+        fwrite(STDERR, "ps-module git: could not set UPDATE_SIGNING_KEY: this release gets no .sig and the update server quarantines it (ps-module update secret).\n");
+    }
+}
+
 /**
- * Pushes the branch and opens the pull request; with --release the title is "Release X.Y.Z - <notes>" and with
+ * Pushes the current branch and opens a pull request (GitHub, via gh) or merge request (GitLab, via push options).
+ * The title is the last commit's subject; the body lists the commits. With --release the title is
+ * "Release X.Y.Z - <notes>" and with
  * --publish the Update-* trailers for the update server go into the PR body (ps-module git merge uses them).
  *
  * @param array<string, string> $options
@@ -533,6 +554,9 @@ function gitflow_pr(string $repoDir, array $options = []): int
                 return 1;
             }
         }
+    }
+    if (isset($options['release']) && $state['host'] === 'github' && gitflow_has_gh()) {
+        gitflow_ensure_signing_secret($repoDir);
     }
     ps_vlog('git: ' . count($subjects) . " commit(s) on {$state['branch']}, title \"$title\", host {$state['host']}");
     $log = implode("\n", array_map(static fn (string $l): string => "- $l", $subjects));

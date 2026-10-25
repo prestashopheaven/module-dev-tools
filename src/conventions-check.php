@@ -7,6 +7,7 @@
  *   MOD-01  The main module file contains a clean class: only trait `use` lines and
  *           the constructor. Everything else lives in traits under src/Module/.
  *   TST     every class, method and thrown exception tested (test-check.php, conventions TST-04..07).
+ *   UPD     update system: signed releases, Addons build, module_key, notice hook (update-check.php, UPD-01..03).
  *   ARCH    DDD + CQRS: layers and their dependencies, commands, queries and handlers and their
  *           registration (architecture-check.php, conventions ARCH-01..15).
  *
@@ -20,6 +21,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/architecture-check.php';
 require_once __DIR__ . '/test-check.php';
+require_once __DIR__ . '/update-check.php';
 require_once __DIR__ . '/verbose.php';
 
 $args = array_slice($argv, 1);
@@ -87,6 +89,11 @@ ps_vdone('conventions: TST tests (' . count($found) . ' problem(s))', $start);
 foreach ($found as $violation) {
     $violations[] = $violation;
 }
+$found = checkUpdateReadiness($moduleDir);
+ps_vlog('conventions: UPD update system (' . count($found) . ' problem(s))');
+foreach ($found as $violation) {
+    $violations[] = $violation;
+}
 
 if ($violations === []) {
     echo "Conventions check OK (" . count($files) . " files: docblocks, clean main class, DDD + CQRS architecture, tests).\n";
@@ -96,6 +103,9 @@ echo "Conventions check found " . count($violations) . " problem(s):\n  " . impl
 if (preg_grep('/ TST-/', $violations) !== []) {
     echo "Tests (TST-04..08, TST-27): every class and method tested, every fault case expected; see conventions TST.
 ";
+}
+if (preg_grep('/ UPD-/', $violations) !== []) {
+    echo "Update system (UPD-01..03): signed releases, Addons build, module_key; see conventions UPD.\n";
 }
 if (preg_grep('/ ARCH-/', $violations) !== []) {
     echo "Architecture (DDD + CQRS): see conventions ARCH-01..15 and .claude/skills/ps-module/architecture.md.\n";

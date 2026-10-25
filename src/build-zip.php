@@ -1,6 +1,11 @@
 <?php
 /**
- * Builds the installable module zip: <repo>/dist/<module>.zip
+ * Builds the installable module zips (update-system/PLAN.md §5), from one stage:
+ *  - <repo>/dist/<module>.zip         the direct-sale build: sold on prestahaven.com and served by the update server
+ *                                     (signed in CI); module-kit's updater notice included, module_key empty
+ *  - <repo>/dist/addons/<module>.zip  the Addons build: the updater notice (module-kit src/Updater) left out, no
+ *                                     update-server URL, module_key from module.spec.json > module_key (when set).
+ *                                     Same file name, because the Addons validator requires <module>.zip.
  *
  * Usage: ps-module build   (or: php build-zip.php <module-dir>)
  *
@@ -21,6 +26,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/composer-paths.php';
 require_once __DIR__ . '/verbose.php';
+require_once __DIR__ . '/build-channels.php';
 
 const EXCLUDE = [
     // directories (matched against path segments)
@@ -103,9 +109,30 @@ if (is_file("$stage/composer.json")) {
     }
 }
 
+// Direct build: module_key always empty (a key belongs to the Addons build only).
+// Addons build: split off now, while composer.json still exists (the autoloader must forget the left-out classes).
+// Modules for own clients only (module.spec.json > distribution: own-clients, e.g. the updater) have no Addons build.
+$addonsStage = null;
+try {
+    setModuleKey("$stage/$name.php", '');
+    if (moduleDistribution(dirname($moduleDir)) !== 'own-clients') {
+        $addonsStage = "$work/addons/$name";
+        makeAddonsStage($stage, $addonsStage, $name, readModuleKey(dirname($moduleDir)), $quiet ?? ' --quiet');
+    } else {
+        ps_vlog('build: distribution own-clients: no Addons build');
+    }
+} catch (RuntimeException $e) {
+    fwrite(STDERR, $e->getMessage() . "\n");
+    removeTree($work);
+    exit(1);
+}
+$stages = array_values(array_filter([$stage, $addonsStage]));
+
 // Same as PrestaShop's own release build: composer files are not shipped.
-@unlink("$stage/composer.json");
-@unlink("$stage/composer.lock");
+foreach ($stages as $dir) {
+    @unlink("$dir/composer.json");
+    @unlink("$dir/composer.lock");
+}
 
 // Manual for Addons (REL-06): docs/readme_<iso>.pdf, made by `ps-module docs build`. Only the languages of
 // docs.json > zip_manuals (default English, else the source language): every language in the zip made it too big
@@ -119,37 +146,33 @@ $zipManuals = is_array($docsConfig) && isset($docsConfig['zip_manuals']) && is_a
 foreach ($zipManuals as $iso) {
     $pdf = "$repoRoot/docs/manual/$iso/readme_$iso.pdf";
     if (is_file($pdf)) {
-        @mkdir("$stage/docs", 0775, true);
-        copy($pdf, "$stage/docs/readme_$iso.pdf");
+        foreach ($stages as $dir) {
+            @mkdir("$dir/docs", 0775, true);
+            copy($pdf, "$dir/docs/readme_$iso.pdf");
+        }
         ps_vlog("build: manual $pdf -> docs/readme_$iso.pdf (" . round(filesize($pdf) / 1024) . ' KB)');
     } else {
         ps_vlog("build: no manual $pdf (made by ps-module docs build), left out");
     }
 }
 
-addIndexFiles($stage, (string) file_get_contents("$moduleDir/index.php"));
+foreach ($stages as $dir) {
+    addIndexFiles($dir, (string) file_get_contents("$moduleDir/index.php"));
+}
 
 $distDir = dirname($moduleDir) . '/dist';
 @mkdir($distDir, 0775, true);
 // The validator requires the zip to be named after the module, without a version.
 $zipPath = "$distDir/$name.zip";
-fwrite(STDERR, "Building $name $version\n");
-@unlink($zipPath);
-
-$zip = new ZipArchive();
-$zip->open($zipPath, ZipArchive::CREATE | ZipArchive::OVERWRITE);
-$it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($stage, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::SELF_FIRST);
-$zipFiles = 0;
-$zipBytes = 0;
-foreach ($it as $item) {
-    $relative = $name . '/' . substr(str_replace('\\', '/', $item->getPathname()), strlen($stage) + 1);
-    $item->isDir() ? $zip->addEmptyDir($relative) : $zip->addFile($item->getPathname(), $relative);
-    if (!$item->isDir()) {
-        ++$zipFiles;
-        $zipBytes += (int) $item->getSize();
-    }
+$addonsZipPath = "$distDir/addons/$name.zip";
+@unlink($addonsZipPath);
+@unlink($addonsZipPath . '.json');
+fwrite(STDERR, "Building $name $version" . ($addonsStage !== null ? ' (direct and Addons build)' : '') . "\n");
+[$zipFiles, $zipBytes] = zipStage($stage, $name, $zipPath);
+if ($addonsStage !== null) {
+    @mkdir("$distDir/addons", 0775, true);
+    zipStage($addonsStage, $name, $addonsZipPath);
 }
-$zip->close();
 if (ps_verbose()) {
     $packages = array_map(static fn (string $d): string => substr(str_replace('\\', '/', $d), strlen("$stage/vendor/")), glob("$stage/vendor/*/*", GLOB_ONLYDIR) ?: []);
     $packages = array_values(array_filter($packages, static fn (string $p): bool => !str_starts_with($p, 'composer/')));
@@ -165,8 +188,10 @@ if (is_file(__DIR__ . '/dod.php')) {
     require_once __DIR__ . '/dod.php';
     $repoDir = dod_repo_dir($moduleDir);
     if ($repoDir !== null) {
-        file_put_contents($zipPath . '.json', json_encode(['fingerprint' => dod_fingerprint($repoDir), 'version' => $version, 'built' => date('c')], JSON_PRETTY_PRINT) . "\n");
-        ps_vlog("build: source fingerprint written to $zipPath.json (validate-zip and validator-api check the zip against it)");
+        foreach (array_filter([$zipPath, $addonsStage !== null ? $addonsZipPath : null]) as $built) {
+            file_put_contents($built . '.json', json_encode(['fingerprint' => dod_fingerprint($repoDir), 'version' => $version, 'built' => date('c')], JSON_PRETTY_PRINT) . "\n");
+        }
+        ps_vlog("build: source fingerprint written next to both zips (validate-zip and validator-api check the zip against it)");
     }
 }
 
