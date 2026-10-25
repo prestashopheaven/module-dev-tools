@@ -35,6 +35,21 @@ final class GitflowReleaseTrailersTest extends TestCase
         file_put_contents("{$this->repo}/module.spec.json", json_encode(['php_min' => '8.1']));
     }
 
+    /**
+     * Run as a script (ps-module git pr), the code above the constants executes first: they must come before it.
+     */
+    public function testTheConstantsAreDeclaredBeforeTheCommandLineRuns(): void
+    {
+        $code = (string) file_get_contents(dirname(__DIR__) . '/src/gitflow.php');
+        $cli = strpos($code, 'exit(gitflow_cli(');
+        self::assertNotFalse($cli);
+        foreach (['GITFLOW_TRAILERS_START', 'GITFLOW_TRAILERS_END', 'GITFLOW_PS_LINES', 'GITFLOW_PHP_MAX'] as $constant) {
+            $declared = strpos($code, 'const ' . $constant . ' ');
+            self::assertNotFalse($declared, $constant);
+            self::assertLessThan($cli, $declared, $constant . ' is declared before the command line runs');
+        }
+    }
+
     protected function tearDown(): void
     {
         @unlink("{$this->repo}/testing.json");

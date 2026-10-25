@@ -33,6 +33,13 @@ declare(strict_types=1);
 require_once __DIR__ . '/dod.php';
 require_once __DIR__ . '/verbose.php';
 
+// Before the command line below: top-level constants only exist once PHP has executed their line.
+const GITFLOW_TRAILERS_START = '<!-- update-trailers -->';
+const GITFLOW_TRAILERS_END = '<!-- /update-trailers -->';
+/** PrestaShop lines the update server knows (update-system server: app:platforms:seed) and the newest PHP line. */
+const GITFLOW_PS_LINES = ['8.1', '8.2', '9.0', '9.1', '9.2'];
+const GITFLOW_PHP_MAX = '8.5';
+
 if (realpath((string) ($_SERVER['SCRIPT_FILENAME'] ?? '')) === __FILE__) {
     exit(gitflow_cli(array_slice($argv, 1)));
 }
@@ -594,11 +601,6 @@ function gitflow_pr(string $repoDir, array $options = []): int
     return $code;
 }
 
-const GITFLOW_TRAILERS_START = '<!-- update-trailers -->';
-const GITFLOW_TRAILERS_END = '<!-- /update-trailers -->';
-/** PrestaShop lines the update server knows (update-system server: app:platforms:seed) and the newest PHP line. */
-const GITFLOW_PS_LINES = ['8.1', '8.2', '9.0', '9.1', '9.2'];
-const GITFLOW_PHP_MAX = '8.5';
 
 /**
  * --name=value and --flag options of a git subcommand.

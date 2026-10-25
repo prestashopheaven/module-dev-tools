@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.25.2] - 2026-10-25
+
+### Opgelost
+- `ps-module git pr --release … --publish` stopte met "Undefined constant GITFLOW_PS_LINES": de constanten stonden onder
+  de opdrachtregelcode van gitflow.php en bestonden nog niet toen die draaide.
+
 ## [1.25.1] - 2026-10-25
 
 ### Gewijzigd
