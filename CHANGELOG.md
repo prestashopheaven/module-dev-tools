@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.25.1] - 2026-10-25
+
+### Gewijzigd
+- Docs-screenshots verbergen de PrestaHaven Updater-melding van module-kit (`#prestahaven-updater-notice`): handleidingen
+  en marketingbeelden zijn hetzelfde voor de directe en de Addons-versie.
+
 ## [1.25.0] - 2026-10-25
 
 ### Toegevoegd
