@@ -442,22 +442,9 @@ function update_run(array $command, ?string $cwd = null): array
 function update_backfill_cli(array $args, string $workspace): int
 {
     $dryRun = in_array('--dry-run', $args, true);
-    $repos = [];
-    foreach ($args as $arg) {
-        if (str_starts_with($arg, '--repo=')) {
-            $repos[] = substr($arg, 7);
-        }
-    }
+    $repos = update_repos_from_args($args);
     if ($repos === []) {
-        foreach (array_merge(glob($workspace . '/modules/*', GLOB_ONLYDIR) ?: [], [$workspace . '/update-system/heaven-updater']) as $dir) {
-            if (!is_dir("$dir/.git")) {
-                continue;
-            }
-            [$code, $url] = update_run(['git', '-C', $dir, 'remote', 'get-url', 'origin']);
-            if ($code === 0 && preg_match('#github\.com[:/]([^/]+/[^/.\s]+)#', $url, $m) === 1) {
-                $repos[] = $m[1];
-            }
-        }
+        $repos = update_workspace_repos($workspace);
     }
     try {
         $key = $dryRun ? '' : update_signing_key();
@@ -516,6 +503,118 @@ function update_backfill_cli(array $args, string $workspace): int
                 @rmdir($dir);
             }
         }
+    }
+
+    return $failures > 0 ? 1 : 0;
+}
+
+/**
+ * The --repo=owner/name arguments.
+ *
+ * @param list<string> $args
+ *
+ * @return list<string>
+ */
+function update_repos_from_args(array $args): array
+{
+    $repos = [];
+    foreach ($args as $arg) {
+        if (str_starts_with($arg, '--repo=')) {
+            $repos[] = substr($arg, 7);
+        }
+    }
+
+    return $repos;
+}
+
+/** The GitHub repository (owner/name) of a git working copy, from its origin remote, or null. */
+function update_repo_of(string $dir): ?string
+{
+    [$code, $url] = update_run(['git', '-C', $dir, 'remote', 'get-url', 'origin']);
+
+    return $code === 0 && preg_match('#github\.com[:/]([^/]+/[^/.\s]+?)(?:\.git)?\s*$#', $url, $m) === 1 ? $m[1] : null;
+}
+
+/**
+ * Every module repository of the workspace on GitHub (modules/*, update-system/* with a module.spec.json).
+ *
+ * @return list<string>
+ */
+function update_workspace_repos(string $workspace): array
+{
+    $repos = [];
+    $dirs = array_merge(glob($workspace . '/modules/*', GLOB_ONLYDIR) ?: [], glob($workspace . '/update-system/*', GLOB_ONLYDIR) ?: []);
+    foreach ($dirs as $dir) {
+        if (is_dir("$dir/.git") && is_file("$dir/module.spec.json") && ($repo = update_repo_of($dir)) !== null) {
+            $repos[] = $repo;
+        }
+    }
+
+    return $repos;
+}
+
+/**
+ * ps-module update secret [--all | --repo=owner/name ...] [--check]
+ * Puts UPDATE_SIGNING_KEY (from the environment or the workspace .env) into the repository secret of the module repo,
+ * through gh on stdin: private repositories on GitHub Free cannot use organization secrets, so each module repo needs
+ * its own copy for the release workflow to sign. The key never appears in output. --check only lists which
+ * repositories have the secret (by name).
+ *
+ * @param list<string> $args
+ */
+function update_secret_cli(array $args, string $workspace, string $cwd): int
+{
+    $repos = update_repos_from_args($args);
+    if (in_array('--all', $args, true)) {
+        $repos = update_workspace_repos($workspace);
+    }
+    if ($repos === []) {
+        $repo = null;
+        for ($dir = $cwd; $dir !== dirname($dir) && $repo === null; $dir = dirname($dir)) {
+            $repo = is_dir("$dir/.git") ? update_repo_of($dir) : null;
+        }
+        if ($repo === null) {
+            fwrite(STDERR, "ps-module update secret: no GitHub repository here; use --repo=owner/name or --all.\n");
+
+            return 2;
+        }
+        $repos = [$repo];
+    }
+    $failures = 0;
+    if (in_array('--check', $args, true)) {
+        foreach ($repos as $repo) {
+            [$code, $out, $err] = update_run(['gh', 'secret', 'list', '--repo', $repo, '--json', 'name']);
+            $names = $code === 0 ? array_column(json_decode($out, true) ?: [], 'name') : [];
+            $has = in_array('UPDATE_SIGNING_KEY', $names, true);
+            echo str_pad($repo, 50) . ($code !== 0 ? 'cannot read: ' . trim($err) : ($has ? 'UPDATE_SIGNING_KEY set' : 'UPDATE_SIGNING_KEY MISSING')) . "\n";
+            $failures += ($code !== 0 || !$has) ? 1 : 0;
+        }
+
+        return $failures > 0 ? 1 : 0;
+    }
+    try {
+        $secret = base64_encode(update_signing_key());
+    } catch (Throwable $e) {
+        fwrite(STDERR, 'ps-module update secret: ' . $e->getMessage() . "\n");
+
+        return 1;
+    }
+    foreach ($repos as $repo) {
+        $process = proc_open(['gh', 'secret', 'set', 'UPDATE_SIGNING_KEY', '--repo', $repo], [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        if (!is_resource($process)) {
+            fwrite(STDERR, "$repo: cannot run gh\n");
+            ++$failures;
+            continue;
+        }
+        fwrite($pipes[0], $secret);
+        fclose($pipes[0]);
+        $out = stream_get_contents($pipes[1]) . stream_get_contents($pipes[2]);
+        if (proc_close($process) !== 0) {
+            fwrite(STDERR, "$repo: gh could not set the secret: " . trim(str_replace($secret, '***', (string) $out)) . "\n");
+            ++$failures;
+            continue;
+        }
+        echo "$repo: UPDATE_SIGNING_KEY set\n";
     }
 
     return $failures > 0 ? 1 : 0;

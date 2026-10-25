@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.25.0] - 2026-10-25
+
+### Toegevoegd
+- Twee builds (`ps-module build`, UPD-04): `dist/<module>.zip` (directe verkoop en update-server, met de
+  updater-melding van module-kit, `module_key` leeg) en `dist/addons/<module>.zip` (Addons: zonder melding, met
+  `module_key` uit `module.spec.json`, autoloader opnieuw gemaakt; de build stopt als er nog `updates.prestahaven.com`
+  in staat). `distribution: own-clients` heeft geen Addons-build. `validate-zip` controleert beide, `validator-api`
+  de Addons-build, en `shops run` installeert en test ook de Addons-zip.
+- `ps-module update secret [--all | --repo=…] [--check]`: zet `UPDATE_SIGNING_KEY` als repository-secret (privé-repo's
+  op GitHub Free kunnen het organisatie-secret niet gebruiken); `ps-module git pr --release` doet dat zelf als het
+  ontbreekt.
+- Conventiecheck UPD-01..03: de release-workflow ondertekent en hangt de Addons-build aan, geen `module_key` in de
+  broncode, een eigen `hookDisplayAdminAfterHeader` heeft `insteadof ModuleBase`.
+
 ## [1.24.0] - 2026-10-24
 
 ### Toegevoegd
