@@ -52,6 +52,23 @@ function multistoreWanted(array $config, array $flags): bool
 }
 
 /**
+ * Which back-office form test the module needs: 'form' (a configuration page with configuration keys: the multistore
+ * form test), 'no-settings' (a configuration page, but the module has no configuration keys: a page that only
+ * explains, nothing to save per shop) or 'none' (no configuration page).
+ *
+ * @param array<string, mixed> $snapshot ps-probe.php output: 'configurable' (getContent exists), 'configuration'
+ *                                       (the module's configuration keys)
+ */
+function msConfigurationFormTest(array $snapshot): string
+{
+    if (empty($snapshot['configurable'])) {
+        return 'none';
+    }
+
+    return empty($snapshot['configuration']) ? 'no-settings' : 'form';
+}
+
+/**
  * Runs the multistore round on a running shop. Afterwards the shop is a multistore shop with the
  * current code of the module installed.
  *
@@ -90,8 +107,12 @@ function multistoreRound(Shop $shop, array $flags = []): array
     }
 
     // 2. Back office: the configuration page per shop context (before the markers, see below).
-    if (!empty($snapshot['configurable'])) {
+    $formTest = msConfigurationFormTest($snapshot);
+    if ($formTest === 'form') {
         $results['multistore: configuration page per shop context'] = msBackOfficeForm($shop, (int) ($setup['ids']['shop2'] ?? 2), (int) ($setup['ids']['group2'] ?? 2));
+    } elseif ($formTest === 'no-settings') {
+        // A configure page without settings (an explanation page, e.g. heavenproductasnew): no form to test.
+        ps_vlog('multistore: configuration page without configuration keys, back-office form test skipped');
     } else {
         ps_vlog('multistore: no configuration page (getContent), back-office form test skipped');
     }

@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.25.3] - 2026-10-28
+
+### Opgelost
+- Multistore-ronde van `ps-module shops run`: een configuratiepagina zonder instellingen (de module heeft geen
+  configuratiesleutels, de pagina legt alleen uit) faalde op "no Symfony form found". De formuliertest draait nu alleen
+  voor een module met configuratiesleutels (`msConfigurationFormTest()`); anders staat in de log waarom hij overgeslagen
+  is. Gevonden met `heavenproductasnew`.
+
 ## [1.25.2] - 2026-10-25
 
 ### Opgelost
