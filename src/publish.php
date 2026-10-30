@@ -64,8 +64,9 @@
  *                                       is no product with the module's reference. Needs products PUT, images DELETE.
  *                                       The zip goes in by hand: PrestaShop has no API for virtual product files.
  *                                       Details: src/publish-shop.php
- *   ps-module publish done addons|shop  record a manual step: dist/<module>.zip of this version is uploaded to
- *                                       PrestaShop Addons (no upload API) / put in the sales shop product by hand
+ *   ps-module publish done addons|shop  record a manual step: dist/addons/<module>.zip of this version is uploaded
+ *                                       to PrestaShop Addons (no upload API) / dist/<module>.zip is put in the sales
+ *                                       shop product by hand
  *   ps-module publish undo <step>       forget a recorded step of the current version
  *
  * docs and demo only publish a released version: tag v<version> exists (the release workflow makes it), or the
@@ -365,7 +366,7 @@ function publish_cmd_status(array $ctx, bool $check): int
 {
     $state = publish_state($ctx);
     $how = [
-        'addons' => 'upload ../dist/' . $ctx['module'] . '.zip in the Addons seller account, then: vendor/bin/ps-module publish done addons',
+        'addons' => 'upload ' . publish_addons_zip($ctx) . ' in the Addons seller account, then: vendor/bin/ps-module publish done addons',
         'docs' => 'vendor/bin/ps-module publish docs' . (publish_env($ctx, 'DOCS_SITE_SFTP_HOST') === '' ? '   (needs DOCS_SITE_SFTP_* in .env)' : ''),
         'demo' => 'vendor/bin/ps-module publish demo' . (publish_env($ctx, 'DEMO_SITE_SSH_HOST') === '' ? '   (needs DEMO_SITE_SSH_* in .env)' : ''),
         'shop' => 'vendor/bin/ps-module publish shop (creates the product once, inactive; a later version: publish shop --update for texts and images, put the zip in it by hand, then publish done shop)'
@@ -388,6 +389,18 @@ function publish_cmd_status(array $ctx, bool $check): int
     echo $open === 0 ? "All published.\n" : "$open step(s) open.\n";
 
     return $open === 0 ? 0 : 1;
+}
+
+/**
+ * The zip to upload to Addons, relative to the module folder: the Addons build of `ps-module build`
+ * (dist/addons/<module>.zip, without the updater notice and with the module_key, UPD-04). dist/<module>.zip is the
+ * direct build for the update server and the sales shop.
+ *
+ * @param array<string, mixed> $ctx
+ */
+function publish_addons_zip(array $ctx): string
+{
+    return '../dist/addons/' . $ctx['module'] . '.zip';
 }
 
 /**

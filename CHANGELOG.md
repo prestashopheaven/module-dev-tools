@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.25.4] - 2026-10-30
+
+### Opgelost
+- `ps-module publish status` noemde voor de Addons-upload `dist/<module>.zip`, de directe build met de
+  updater-melding en zonder `module_key`. Het noemt nu de Addons-build `dist/addons/<module>.zip` (UPD-04,
+  `publish_addons_zip()`). Gevonden met `heavenfooterpaymenticons`.
+
 ## [1.25.3] - 2026-10-28
 
 ### Opgelost
