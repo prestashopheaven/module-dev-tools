@@ -450,21 +450,43 @@ function msBackOfficeForm(Shop $shop, int $shop2, int $group2): array
     if (preg_grep('/\[multistore_/', array_keys($page['checkboxes']))) {
         $problems[] = 'all shops context: the form shows multistore checkboxes';
     }
-    $textField = msFirstTextField($page);
-    if ($textField === null) {
+    if (msFirstTextField($page) === null) {
         @unlink($jar);
 
         return ['ok' => true, 'output' => 'no text field in the configuration form (nothing to test)'];
     }
-    $numeric = msIsNumber((string) ($page['fields'][$textField] ?? ''));
-    $allMarker = msFormMarker('all', $numeric);
-    ps_vlog("multistore form: testing field $textField (" . ($numeric ? 'numeric' : 'text') . "), all shops value $allMarker");
-    $fields = $page['fields'];
-    $fields[$textField] = $allMarker;
-    $save = msSubmit($jar, $page, $fields);
-    $rows = msRowsWithValue($shop, $allMarker);
-    if ($save !== null) {
-        $problems[] = "all shops context: saving failed: $save";
+    // Try the text fields in turn: the first one that saves the marker as one global value is tested per context.
+    $textField = '';
+    $numeric = false;
+    $allMarker = '';
+    $rows = [];
+    $refused = [];
+    $save = null;
+    foreach (msTextFields($page) as $candidate) {
+        $numeric = msIsNumber((string) ($page['fields'][$candidate] ?? ''));
+        $allMarker = msFormMarker('all', $numeric);
+        ps_vlog("multistore form: testing field $candidate (" . ($numeric ? 'numeric' : 'text') . "), all shops value $allMarker");
+        $fields = $page['fields'];
+        $fields[$candidate] = $allMarker;
+        $save = msSubmit($jar, $page, $fields);
+        $rows = msRowsWithValue($shop, $allMarker);
+        $textField = $candidate;
+        if ($save === null && $rows !== []) {
+            break;
+        }
+        $refused[] = "$candidate (" . ($save ?? 'saving wrote nothing') . ')';
+        ps_vlog("multistore form: field $candidate refused the marker: " . ($save ?? 'nothing written'));
+        $rows = [];
+        // The form keeps the refused value on the page: start the next try from a fresh page.
+        $fresh = msFormPage($jar, $configureUrl, '');
+        if (is_string($fresh)) {
+            $problems[] = $fresh;
+            break;
+        }
+        $page = $fresh;
+    }
+    if ($rows === []) {
+        $problems[] = 'all shops context: no text field saved the test value as a global value: ' . implode('; ', $refused);
     } elseif (count($rows) !== 1 || $rows[0]['scope'] !== 'global') {
         $problems[] = 'all shops context: saving wrote ' . json_encode($rows) . ', expected one global value';
     }
@@ -643,8 +665,10 @@ function msIsNumber(string $value): bool
 }
 
 /**
- * The value the back-office test writes in a context: a text marker ("ms-bo-all.", "ms-bo-s2."), or
+ * The value the back-office test writes in a context: a text marker ("ms-bo-all", "ms-bo-s2"), or
  * for a numeric field a number that is unlikely to be a default (71 = all shops, 72 = shop, 73 = group).
+ * The text marker is only lowercase letters, digits and hyphens, so a field with a strict format (a slug, a list of
+ * page names) accepts it too and keeps it unchanged.
  *
  * @param string $context 'all', 'shop' or 'group'
  * @param string $scope scope label of the shop or group ('s2', 'g2') for the text marker
@@ -655,7 +679,7 @@ function msFormMarker(string $context, bool $numeric, string $scope = 'all'): st
         return ['all' => '71', 'shop' => '72', 'group' => '73'][$context];
     }
 
-    return 'ms-bo-' . $scope . '.';
+    return 'ms-bo-' . $scope;
 }
 
 /**
@@ -672,13 +696,26 @@ function msSameValue(string $shown, string $marker, bool $numeric): bool
 }
 
 /**
- * The first text input of the form (the field used for the test), or null.
+ * The first text input of the form (the first field the test tries), or null.
  *
  * @param array{text: string[]} $page
  */
 function msFirstTextField(array $page): ?string
 {
     return $page['text'][0] ?? null;
+}
+
+/**
+ * The text inputs the test tries in turn, in the order of the form: the first one whose value it can save in the
+ * context "all shops" is used. A field may rightly refuse the marker (a colour, a URL, a value from a list).
+ *
+ * @param array{text: string[]} $page
+ *
+ * @return string[]
+ */
+function msTextFields(array $page): array
+{
+    return array_values(array_unique($page['text'] ?? []));
 }
 
 /**

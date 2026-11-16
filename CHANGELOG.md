@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.26.1] - 2026-11-16
+
+### Gerepareerd
+- Multistore-ronde, configuratiepagina per winkelcontext: de tekstmarkering heeft geen punt meer (`ms-bo-all`,
+  `ms-bo-s2`, `ms-bo-g2`: alleen kleine letters, cijfers en koppeltekens), zodat ook een veld met een strikt formaat
+  (paginanamen, een slug) hem accepteert. Weigert een tekstveld de markering toch (validatiefout of niets opgeslagen),
+  dan probeert de test het volgende tekstveld van het formulier in plaats van te falen; pas als geen enkel tekstveld een
+  globale waarde opslaat, is het een fout (met per veld de reden). Nieuwe functie `msTextFields()` met tests. Gevonden
+  met `heavenscrollbuttons` 1.0.0 (veld "Also hide on these pages").
+
 ## [1.26.0] - 2026-11-02
 
 ### Gewijzigd
